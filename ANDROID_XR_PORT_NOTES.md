@@ -154,3 +154,33 @@ Representative evidence from run log:
 7. Evaluate whether `Failed to latch buffer` warnings persist on physical hardware.
 8. Only after stable frame loop, re-enable optional features one by one (passthrough/foveation/perf controls) behind extension checks.
 
+## Latest headset validation (2026-03-03, SM-I610)
+- Device: `R3GYB0CHXSY` (Android XR headset)
+- Capture: `/tmp/citra_headset_running.log` (pid-filtered logcat for `org.citra.citra_emu.playtest.debug:vr_process`)
+- Launch title path used by app:
+  - `/sdmc/Nintendo 3DS/.../title/00040000/00033500/content/...`
+- Runtime evidence:
+  - `Runtime=Android XR version=1.0.0`
+  - `xrCreateSession => XR_SUCCESS`
+  - `xrCreateSwapchainAndroidSurfaceKHR => XR_SUCCESS`
+  - `Frame[1..5] xrBeginFrame/xrEndFrame` present
+- Render-loop evidence:
+  - sustained `doFrame presenting` logs
+  - sustained `eglSwapBuffers ok frame=... xr_surface=1` logs through `frame=17100`
+
+Observed behavior:
+- First seconds after session start still show repeated compositor warnings:
+  - `Buffer item consumer returned null buffer`
+  - `Failed to latch buffer in OpenXRHandler: main`
+- After startup churn, app continues rendering for minutes with regular swap/present logs.
+
+## VR loader-failure behavior update (2026-03-03)
+- Before patch:
+  - invalid/unsupported launch path (for example `/sdcard/Download/Test/oot.cia`) triggered a 2D `EmulationErrorDialogFragment` in full-space and left user effectively stuck on black.
+- After patch:
+  - VR path now shows VR error/toast and automatically returns to `MainActivity` (home/menu space).
+  - Evidence log line:
+    - `VR load failure (resultCode=2): Invalid ROM format; returning to MainActivity.`
+
+Related commit on `androidxr-experiment`:
+- `aa9bc4f4f` (`androidxr: stabilize OpenXR startup and VR boot fallback`)
