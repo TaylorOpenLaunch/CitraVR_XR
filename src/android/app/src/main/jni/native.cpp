@@ -345,11 +345,27 @@ void Java_org_citra_citra_1emu_NativeLibrary_doFrame([[maybe_unused]] JNIEnv* en
     static uint64_t do_frame_calls = 0;
     ++do_frame_calls;
 
-    if (stop_run || pause_emulation || window == nullptr) {
+    if (pause_emulation || window == nullptr) {
         if ((do_frame_calls % 300) == 0) {
             LOG_INFO(Frontend,
                      "doFrame skipped (calls={} stop_run={} pause_emulation={} window_present={})",
                      do_frame_calls, stop_run.load(), pause_emulation.load(), window != nullptr);
+        }
+        return;
+    }
+
+    if (stop_run) {
+        if (s_is_xr_surface) {
+            if (do_frame_calls == 1 || (do_frame_calls % 300) == 0) {
+                LOG_INFO(Frontend,
+                         "doFrame bootstrap present (calls={} stop_run=true xr_surface=true)",
+                         do_frame_calls);
+            }
+            window->TryPresenting();
+        } else if ((do_frame_calls % 300) == 0) {
+            LOG_INFO(Frontend,
+                     "doFrame skipped (calls={} stop_run=true xr_surface=false window_present={})",
+                     do_frame_calls, window != nullptr);
         }
         return;
     }

@@ -184,3 +184,14 @@ Observed behavior:
 
 Related commit on `androidxr-experiment`:
 - `aa9bc4f4f` (`androidxr: stabilize OpenXR startup and VR boot fallback`)
+
+## Startup bootstrap rendering patch (2026-03-03 late)
+- Added XR bootstrap presentation path while `stop_run=true` (core not powered yet):
+  - `NativeLibrary_doFrame` now allows XR `TryPresenting()` during startup load instead of hard skip.
+  - OpenGL window path submits a placeholder clear frame (`bootstrap eglSwapBuffers`) before emulation frames.
+- Purpose:
+  - reduce early-session "null buffer / latch buffer" startup window on Android XR while game load is still initializing.
+- Files:
+  - `src/android/app/src/main/jni/native.cpp`
+  - `src/android/app/src/main/jni/emu_window/emu_window_gl.cpp`
+  - `src/android/app/src/main/jni/emu_window/emu_window_gl.h`

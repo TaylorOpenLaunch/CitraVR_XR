@@ -265,6 +265,49 @@ void EmuWindow_Android_OpenGL::StopPresenting() {
     presenting_state = PresentingState::Stopped;
 }
 
+void EmuWindow_Android_OpenGL::PresentBootstrapFrame() {
+    if (presenting_state == PresentingState::Initial) [[unlikely]] {
+        const EGLBoolean make_current =
+            eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
+        if (make_current != EGL_TRUE) {
+            const EGLint egl_error = eglGetError();
+            __android_log_print(ANDROID_LOG_ERROR, "CITRAVR_PORT",
+                                "eglMakeCurrent failed during bootstrap: error=0x%x (%s)",
+                                egl_error, EglErrorToString(egl_error));
+            presenting_state = PresentingState::Stopped;
+            return;
+        }
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        presenting_state = PresentingState::Running;
+    }
+    if (presenting_state != PresentingState::Running) [[unlikely]] {
+        return;
+    }
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glViewport(0, 0, std::max(1, window_width), std::max(1, window_height));
+    glClearColor(0.01f, 0.01f, 0.01f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    const EGLBoolean swap_result = eglSwapBuffers(egl_display, egl_surface);
+    static uint64_t bootstrap_frame_counter = 0;
+    ++bootstrap_frame_counter;
+    if (swap_result != EGL_TRUE) {
+        const EGLint egl_error = eglGetError();
+        __android_log_print(ANDROID_LOG_ERROR, "CITRAVR_PORT",
+                            "bootstrap eglSwapBuffers failed frame=%llu error=0x%x (%s)",
+                            static_cast<unsigned long long>(bootstrap_frame_counter), egl_error,
+                            EglErrorToString(egl_error));
+        presenting_state = PresentingState::Stopped;
+        return;
+    }
+    if (bootstrap_frame_counter == 1 || (bootstrap_frame_counter % 300) == 0) {
+        __android_log_print(ANDROID_LOG_INFO, "CITRAVR_PORT",
+                            "bootstrap eglSwapBuffers ok frame=%llu xr_surface=%d",
+                            static_cast<unsigned long long>(bootstrap_frame_counter),
+                            IsXrSurface() ? 1 : 0);
+    }
+}
+
 void EmuWindow_Android_OpenGL::TryPresenting() {
     static uint64_t try_present_calls = 0;
     ++try_present_calls;
@@ -276,6 +319,15 @@ void EmuWindow_Android_OpenGL::TryPresenting() {
     }
 
     if (!system.IsPoweredOn()) {
+        if (IsXrSurface()) {
+            PresentBootstrapFrame();
+            if (try_present_calls == 1 || (try_present_calls % 300) == 0) {
+                __android_log_print(
+                    ANDROID_LOG_INFO, "CITRAVR_PORT",
+                    "TryPresenting bootstrap path: core not powered on, submitting placeholder");
+            }
+            return;
+        }
         if ((try_present_calls % 300) == 0) {
             __android_log_print(ANDROID_LOG_INFO, "CITRAVR_PORT",
                                 "TryPresenting skipped: system not powered on");

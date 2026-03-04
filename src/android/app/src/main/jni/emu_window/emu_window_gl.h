@@ -32,6 +32,7 @@ private:
     bool CreateWindowSurface() override;
     void DestroyWindowSurface() override;
     void DestroyContext() override;
+    void PresentBootstrapFrame();
 
 private:
     Core::System& system;
