@@ -24,8 +24,9 @@ private:
 };
 
 EmuWindow_Android_Vulkan::EmuWindow_Android_Vulkan(
-    ANativeWindow* surface, std::shared_ptr<Common::DynamicLibrary> driver_library_)
-    : EmuWindow_Android{surface}, driver_library{driver_library_} {
+    ANativeWindow* surface, std::shared_ptr<Common::DynamicLibrary> driver_library_,
+    bool is_xr_surface)
+    : EmuWindow_Android{surface, is_xr_surface}, driver_library{driver_library_} {
     CreateWindowSurface();
 
     if (core_context = CreateSharedContext(); !core_context) {

@@ -71,6 +71,7 @@ ANativeWindow* s_surf;
 // false when using VR mode, as the surface is allocated by the OpenXR swapchain.
 // True otherwise.
 bool s_should_release_surface = true;
+bool s_is_xr_surface = false;
 
 std::shared_ptr<Common::DynamicLibrary> vulkan_library{};
 std::unique_ptr<EmuWindow_Android> window;
@@ -153,12 +154,13 @@ static Core::System::ResultStatus RunCitra(const std::string& filepath) {
     switch (graphics_api) {
 #ifdef ENABLE_OPENGL
     case Settings::GraphicsAPI::OpenGL:
-        window = std::make_unique<EmuWindow_Android_OpenGL>(system, s_surf);
+        window = std::make_unique<EmuWindow_Android_OpenGL>(system, s_surf, s_is_xr_surface);
         break;
 #endif
 #ifdef ENABLE_VULKAN
     case Settings::GraphicsAPI::Vulkan:
-        window = std::make_unique<EmuWindow_Android_Vulkan>(s_surf, vulkan_library);
+        window = std::make_unique<EmuWindow_Android_Vulkan>(s_surf, vulkan_library,
+                                                            s_is_xr_surface);
         break;
 #endif
     default:
@@ -166,9 +168,10 @@ static Core::System::ResultStatus RunCitra(const std::string& filepath) {
                      "Unknown or unsupported graphics API {}, falling back to available default",
                      graphics_api);
 #ifdef ENABLE_OPENGL
-        window = std::make_unique<EmuWindow_Android_OpenGL>(system, s_surf);
+        window = std::make_unique<EmuWindow_Android_OpenGL>(system, s_surf, s_is_xr_surface);
 #elif ENABLE_VULKAN
-        window = std::make_unique<EmuWindow_Android_Vulkan>(s_surf, vulkan_library);
+        window = std::make_unique<EmuWindow_Android_Vulkan>(s_surf, vulkan_library,
+                                                            s_is_xr_surface);
 #else
 // TODO: Add a null renderer backend for this, perhaps.
 #error "At least one renderer must be enabled."
@@ -178,6 +181,11 @@ static Core::System::ResultStatus RunCitra(const std::string& filepath) {
 
     // Forces a config reload on game boot, if the user changed settings in the UI
     Config{};
+    if (s_is_xr_surface && Settings::values.async_presentation.GetValue()) {
+        LOG_INFO(Frontend,
+                 "XR mode active: forcing Renderer_AsyncPresentation=false for surface swapchain stability");
+        Settings::values.async_presentation = false;
+    }
     // Replace with game-specific settings
     u64 program_id{};
     FileUtil::SetCurrentRomPath(filepath);
@@ -299,9 +307,16 @@ void Java_org_citra_citra_1emu_NativeLibrary_surfaceChanged(JNIEnv* env,
                                                             jobject surf, jboolean should_release_surface) {
     s_surf = ANativeWindow_fromSurface(env, surf);
     s_should_release_surface = should_release_surface;
+    s_is_xr_surface = !s_should_release_surface;
+
+    const int width = s_surf ? ANativeWindow_getWidth(s_surf) : 0;
+    const int height = s_surf ? ANativeWindow_getHeight(s_surf) : 0;
+    LOG_INFO(Frontend,
+             "Surface changed: should_release_surface={} is_xr_surface={} native_size={}x{}",
+             s_should_release_surface, s_is_xr_surface, width, height);
 
     if (window) {
-        window->OnSurfaceChanged(s_surf);
+        window->OnSurfaceChanged(s_surf, s_is_xr_surface);
     }
 
     auto& system = Core::System::GetInstance();
@@ -319,15 +334,28 @@ void Java_org_citra_citra_1emu_NativeLibrary_surfaceDestroyed([[maybe_unused]] J
         ANativeWindow_release(s_surf);
     }
     s_surf = nullptr;
+    s_is_xr_surface = false;
     if (window) {
-        window->OnSurfaceChanged(s_surf);
+        window->OnSurfaceChanged(s_surf, s_is_xr_surface);
     }
 }
 
 void Java_org_citra_citra_1emu_NativeLibrary_doFrame([[maybe_unused]] JNIEnv* env,
                                                      [[maybe_unused]] jobject obj) {
-    if (stop_run || pause_emulation) {
+    static uint64_t do_frame_calls = 0;
+    ++do_frame_calls;
+
+    if (stop_run || pause_emulation || window == nullptr) {
+        if ((do_frame_calls % 300) == 0) {
+            LOG_INFO(Frontend,
+                     "doFrame skipped (calls={} stop_run={} pause_emulation={} window_present={})",
+                     do_frame_calls, stop_run.load(), pause_emulation.load(), window != nullptr);
+        }
         return;
+    }
+
+    if (do_frame_calls == 1 || (do_frame_calls % 600) == 0) {
+        LOG_INFO(Frontend, "doFrame presenting (calls={})", do_frame_calls);
     }
     window->TryPresenting();
 }

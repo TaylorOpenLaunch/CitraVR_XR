@@ -475,42 +475,57 @@ private:
 
         uint32_t                        layerCount = 0;
         std::vector<XrCompositionLayer> layers(gOpenXr->mMaxLayerCount, XrCompositionLayer{});
+        const bool androidXrMinimalComposition = OpenXrIsAndroidXrRuntime();
+        if (androidXrMinimalComposition) {
+            static bool loggedAndroidXrMinimalComposition = false;
+            if (!loggedAndroidXrMinimalComposition) {
+                XR_PORT_LOGW(
+                    "Android XR runtime detected: using minimal composition path (top game panel only)");
+                loggedAndroidXrMinimalComposition = true;
+            }
+        }
         {
+            if (androidXrMinimalComposition) {
+                // Keep Android XR composition minimal while we validate reliable buffer latching.
+                mGameSurfaceLayer->FrameTopPanel(gOpenXr->mLocalSpace, layers, layerCount,
+                                                 gOpenXr->headLocation.pose,
+                                                 isImmersiveModeEnabled, immersiveModeFactor);
+            } else {
+                // First, add the passthrough layer.
+                if (mPassthroughLayer != nullptr) {
 
-            // First, add the passthrough layer.
-            if (mPassthroughLayer != nullptr) {
+                    XrCompositionLayerPassthroughFB passthroughLayer = {};
+                    mPassthroughLayer->Frame(passthroughLayer);
+                    layers[layerCount++].mPassthrough = passthroughLayer;
+                }
 
-                XrCompositionLayerPassthroughFB passthroughLayer = {};
-                mPassthroughLayer->Frame(passthroughLayer);
-                layers[layerCount++].mPassthrough = passthroughLayer;
+                // Game surface (upper and lower panels) are in front of the passthrough layer.
+                mGameSurfaceLayer->FrameTopPanel(gOpenXr->mLocalSpace, layers, layerCount,
+                                                 gOpenXr->headLocation.pose,
+                                                 isImmersiveModeEnabled, immersiveModeFactor);
+
+                if (showUIRibbon) { mRibbonLayer->Frame(gOpenXr->mLocalSpace, layers, layerCount); }
+                const bool showLowerPanel =
+                    showUIRibbon && appState.mLowerMenuType == LowerMenuType::MAIN_MENU;
+                if (showLowerPanel) {
+                    mGameSurfaceLayer->FrameLowerPanel(gOpenXr->mLocalSpace, layers, layerCount,
+                                                       immersiveModeFactor);
+                }
+
+                // If active, the keyboard layer is in front of the game surface.
+                if (appState.mIsKeyboardActive) {
+                    mKeyboardLayer->Frame(gOpenXr->mLocalSpace, layers, layerCount);
+                }
+
+                // If visible, error messsage appears in front of all other panels.
+                if (appState.mShouldShowErrorMessage) {
+                    mErrorMessageLayer->Frame(gOpenXr->mLocalSpace, layers, layerCount);
+                }
+
+                // Cursor visibility will depend on hit-test but will be in front
+                // of all other panels. This is because precedence lines up with depth order.
+                HandleCursorLayer(jni, appState, showLowerPanel, showUIRibbon, layers, layerCount);
             }
-
-            // Game surface (upper and lower panels) are in front of the passthrough layer.
-            mGameSurfaceLayer->FrameTopPanel(gOpenXr->mLocalSpace, layers, layerCount,
-                                             gOpenXr->headLocation.pose, isImmersiveModeEnabled,
-                                             immersiveModeFactor);
-
-            if (showUIRibbon) { mRibbonLayer->Frame(gOpenXr->mLocalSpace, layers, layerCount); }
-            const bool showLowerPanel =
-                showUIRibbon && appState.mLowerMenuType == LowerMenuType::MAIN_MENU;
-            if (showLowerPanel) {
-                mGameSurfaceLayer->FrameLowerPanel(gOpenXr->mLocalSpace, layers, layerCount,
-                                                   immersiveModeFactor);
-            }
-
-            // If active, the keyboard layer is in front of the game surface.
-            if (appState.mIsKeyboardActive) {
-                mKeyboardLayer->Frame(gOpenXr->mLocalSpace, layers, layerCount);
-            }
-
-            // If visible, error messsage appears in front of all other panels.
-            if (appState.mShouldShowErrorMessage) {
-                mErrorMessageLayer->Frame(gOpenXr->mLocalSpace, layers, layerCount);
-            }
-
-            // Cursor visibility will depend on hit-test but will be in front
-            // of all other panels. This is because precedence lines up with depth order.
-            HandleCursorLayer(jni, appState, showLowerPanel, showUIRibbon, layers, layerCount);
         }
 
         std::vector<const XrCompositionLayerBaseHeader*> layerHeaders;
@@ -1065,8 +1080,12 @@ private:
                 XR_PORT_LOGI("Skipping thread priority setup: XR_KHR_android_thread_settings unavailable");
 #endif
                 if (mGameSurfaceLayer) {
-                    ALOGD("SetSurface");
-                    mGameSurfaceLayer->SetSurface(mActivityObject);
+                    if (OpenXrIsAndroidXrRuntime()) {
+                        mGameSurfaceLayer->RecreateSwapchainAndSurface(mActivityObject);
+                    } else {
+                        ALOGD("SetSurface");
+                        mGameSurfaceLayer->SetSurface(mActivityObject);
+                    }
                 }
             }
         } else if (state == XR_SESSION_STATE_STOPPING) {

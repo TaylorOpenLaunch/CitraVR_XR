@@ -48,6 +48,7 @@ add_library(citra-android SHARED
 target_link_libraries(citra-android PRIVATE audio_core citra_common citra_core input_common network)
 target_link_libraries(citra-android PRIVATE android camera2ndk GLESv3 inih jnigraphics
   log mediandk openxr_loader yuv)
+target_compile_definitions(citra-android PRIVATE CITRAVR_DISABLE_XR_CONTROLLER_CHECK=1)
 
 if (ENABLE_OPENGL)
     target_sources(citra-android PRIVATE

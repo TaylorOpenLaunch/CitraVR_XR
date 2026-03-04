@@ -288,6 +288,19 @@ void GameSurfaceLayer::SetSurface(const jobject activityObject) const {
     mEnv->CallStaticVoidMethod(mVrGameSurfaceClass, setSurfaceMethodID, activityObject, mSurface);
 }
 
+void GameSurfaceLayer::RecreateSwapchainAndSurface(const jobject activityObject) {
+    if (mSwapchain.mHandle != XR_NULL_HANDLE) {
+        OXR(xrDestroySwapchain(mSwapchain.mHandle));
+        mSwapchain.mHandle = XR_NULL_HANDLE;
+    }
+    mSwapchain.mWidth  = 0;
+    mSwapchain.mHeight = 0;
+    mSurface           = nullptr;
+    CreateSwapchain();
+    SetSurface(activityObject);
+    XR_PORT_LOGI("GameSurfaceLayer: recreated Android XR swapchain/surface on session start");
+}
+
 void GameSurfaceLayer::FrameTopPanel(const XrSpace& space, std::vector<XrCompositionLayer>& layers,
                                      uint32_t& layerCount, const XrPosef& headPose,
                                      const bool   isImmersiveModeEnabled,
@@ -530,10 +543,13 @@ int32_t GameSurfaceLayer::Init(const XrSession& session, const jobject activityO
 }
 
 void GameSurfaceLayer::Shutdown() {
-    xrDestroySwapchain(mSwapchain.mHandle);
-    mSwapchain.mHandle = XR_NULL_HANDLE;
+    if (mSwapchain.mHandle != XR_NULL_HANDLE) {
+        OXR(xrDestroySwapchain(mSwapchain.mHandle));
+        mSwapchain.mHandle = XR_NULL_HANDLE;
+    }
     mSwapchain.mWidth  = 0;
     mSwapchain.mHeight = 0;
+    mSurface           = nullptr;
     mEnv->DeleteGlobalRef(mVrGameSurfaceClass);
 }
 

@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <string>
 #include <android/native_window_jni.h>
+#include <android/log.h>
 #include "common/logging/log.h"
 #include "common/settings.h"
 #include "input_common/main.h"
@@ -27,11 +28,24 @@ static void UpdateLandscapeScreenLayout() {
             IDCache::GetNativeLibraryClass(), IDCache::GetLandscapeScreenLayout()));
 }
 
-void EmuWindow_Android::OnSurfaceChanged(ANativeWindow* surface) {
+void EmuWindow_Android::OnSurfaceChanged(ANativeWindow* surface, bool xr_surface) {
     render_window = surface;
+    is_xr_surface = xr_surface;
+
+    if (surface) {
+        window_width = ANativeWindow_getWidth(surface);
+        window_height = ANativeWindow_getHeight(surface);
+    } else {
+        window_width = 0;
+        window_height = 0;
+    }
 
     window_info.type = Frontend::WindowSystemType::Android;
     window_info.render_surface = surface;
+
+    __android_log_print(ANDROID_LOG_INFO, "CITRAVR_PORT",
+                        "OnSurfaceChanged: surface=%p xr_surface=%d size=%dx%d",
+                        static_cast<void*>(surface), xr_surface ? 1 : 0, window_width, window_height);
 
     StopPresenting();
     OnFramebufferSizeChanged();
@@ -63,7 +77,8 @@ void EmuWindow_Android::OnFramebufferSizeChanged() {
     }
 }
 
-EmuWindow_Android::EmuWindow_Android(ANativeWindow* surface) : host_window{surface} {
+EmuWindow_Android::EmuWindow_Android(ANativeWindow* surface, bool xr_surface)
+    : host_window{surface}, is_xr_surface{xr_surface} {
     LOG_DEBUG(Frontend, "Initializing EmuWindow_Android");
 
     if (!surface) {
@@ -73,6 +88,9 @@ EmuWindow_Android::EmuWindow_Android(ANativeWindow* surface) : host_window{surfa
 
     window_width = ANativeWindow_getWidth(surface);
     window_height = ANativeWindow_getHeight(surface);
+    __android_log_print(ANDROID_LOG_INFO, "CITRAVR_PORT",
+                        "EmuWindow_Android ctor: surface=%p xr_surface=%d size=%dx%d",
+                        static_cast<void*>(surface), xr_surface ? 1 : 0, window_width, window_height);
 
     Network::Init();
 }

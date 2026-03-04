@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <string>
 
+#include <android/log.h>
 #include <android/native_window_jni.h>
 #include <glad/glad.h>
 
@@ -17,6 +18,47 @@
 #include "jni/emu_window/emu_window_gl.h"
 #include "video_core/gpu.h"
 #include "video_core/renderer_base.h"
+
+namespace {
+
+const char* EglErrorToString(EGLint error) {
+    switch (error) {
+    case EGL_SUCCESS:
+        return "EGL_SUCCESS";
+    case EGL_NOT_INITIALIZED:
+        return "EGL_NOT_INITIALIZED";
+    case EGL_BAD_ACCESS:
+        return "EGL_BAD_ACCESS";
+    case EGL_BAD_ALLOC:
+        return "EGL_BAD_ALLOC";
+    case EGL_BAD_ATTRIBUTE:
+        return "EGL_BAD_ATTRIBUTE";
+    case EGL_BAD_CONTEXT:
+        return "EGL_BAD_CONTEXT";
+    case EGL_BAD_CONFIG:
+        return "EGL_BAD_CONFIG";
+    case EGL_BAD_CURRENT_SURFACE:
+        return "EGL_BAD_CURRENT_SURFACE";
+    case EGL_BAD_DISPLAY:
+        return "EGL_BAD_DISPLAY";
+    case EGL_BAD_SURFACE:
+        return "EGL_BAD_SURFACE";
+    case EGL_BAD_MATCH:
+        return "EGL_BAD_MATCH";
+    case EGL_BAD_PARAMETER:
+        return "EGL_BAD_PARAMETER";
+    case EGL_BAD_NATIVE_PIXMAP:
+        return "EGL_BAD_NATIVE_PIXMAP";
+    case EGL_BAD_NATIVE_WINDOW:
+        return "EGL_BAD_NATIVE_WINDOW";
+    case EGL_CONTEXT_LOST:
+        return "EGL_CONTEXT_LOST";
+    default:
+        return "EGL_UNKNOWN";
+    }
+}
+
+} // namespace
 
 static constexpr std::array<EGLint, 15> egl_attribs{EGL_SURFACE_TYPE,
                                                     EGL_WINDOW_BIT,
@@ -72,8 +114,12 @@ private:
     EGLContext egl_context{};
 };
 
-EmuWindow_Android_OpenGL::EmuWindow_Android_OpenGL(Core::System& system_, ANativeWindow* surface)
-    : EmuWindow_Android{surface}, system{system_} {
+EmuWindow_Android_OpenGL::EmuWindow_Android_OpenGL(Core::System& system_, ANativeWindow* surface,
+                                                   bool is_xr_surface)
+    : EmuWindow_Android{surface, is_xr_surface}, system{system_} {
+    __android_log_print(ANDROID_LOG_INFO, "CITRAVR_PORT",
+                        "OpenGL window ctor: xr_surface=%d initial_size=%dx%d",
+                        IsXrSurface() ? 1 : 0, window_width, window_height);
     if (egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY); egl_display == EGL_NO_DISPLAY) {
         LOG_CRITICAL(Frontend, "eglGetDisplay() failed");
         return;
@@ -132,14 +178,34 @@ bool EmuWindow_Android_OpenGL::CreateWindowSurface() {
         return true;
     }
 
+    const int native_width = ANativeWindow_getWidth(host_window);
+    const int native_height = ANativeWindow_getHeight(host_window);
+    __android_log_print(ANDROID_LOG_INFO, "CITRAVR_PORT",
+                        "CreateWindowSurface: xr_surface=%d native_size=%dx%d",
+                        IsXrSurface() ? 1 : 0, native_width, native_height);
+
     EGLint format{};
     eglGetConfigAttrib(egl_display, egl_config, EGL_NATIVE_VISUAL_ID, &format);
-    ANativeWindow_setBuffersGeometry(host_window, 0, 0, format);
+    const int geometry_result = ANativeWindow_setBuffersGeometry(host_window, 0, 0, format);
+    __android_log_print(ANDROID_LOG_INFO, "CITRAVR_PORT",
+                        "ANativeWindow_setBuffersGeometry(format=%d xr_surface=%d) => %d", format,
+                        IsXrSurface() ? 1 : 0, geometry_result);
 
     if (egl_surface = eglCreateWindowSurface(egl_display, egl_config, host_window, 0);
         egl_surface == EGL_NO_SURFACE) {
+        const EGLint egl_error = eglGetError();
+        __android_log_print(ANDROID_LOG_ERROR, "CITRAVR_PORT",
+                            "eglCreateWindowSurface failed: error=0x%x (%s)", egl_error,
+                            EglErrorToString(egl_error));
         return {};
     }
+
+    EGLint width = 0;
+    EGLint height = 0;
+    eglQuerySurface(egl_display, egl_surface, EGL_WIDTH, &width);
+    eglQuerySurface(egl_display, egl_surface, EGL_HEIGHT, &height);
+    __android_log_print(ANDROID_LOG_INFO, "CITRAVR_PORT", "egl surface created: size=%dx%d", width,
+                        height);
 
     return egl_surface;
 }
@@ -200,11 +266,33 @@ void EmuWindow_Android_OpenGL::StopPresenting() {
 }
 
 void EmuWindow_Android_OpenGL::TryPresenting() {
+    static uint64_t try_present_calls = 0;
+    ++try_present_calls;
+    if (try_present_calls == 1 || (try_present_calls % 600) == 0) {
+        __android_log_print(ANDROID_LOG_INFO, "CITRAVR_PORT",
+                            "TryPresenting entry calls=%llu state=%d xr_surface=%d",
+                            static_cast<unsigned long long>(try_present_calls),
+                            static_cast<int>(presenting_state), IsXrSurface() ? 1 : 0);
+    }
+
     if (!system.IsPoweredOn()) {
+        if ((try_present_calls % 300) == 0) {
+            __android_log_print(ANDROID_LOG_INFO, "CITRAVR_PORT",
+                                "TryPresenting skipped: system not powered on");
+        }
         return;
     }
     if (presenting_state == PresentingState::Initial) [[unlikely]] {
-        eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
+        const EGLBoolean make_current =
+            eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
+        if (make_current != EGL_TRUE) {
+            const EGLint egl_error = eglGetError();
+            __android_log_print(ANDROID_LOG_ERROR, "CITRAVR_PORT",
+                                "eglMakeCurrent failed during TryPresenting: error=0x%x (%s)",
+                                egl_error, EglErrorToString(egl_error));
+            presenting_state = PresentingState::Stopped;
+            return;
+        }
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
         presenting_state = PresentingState::Running;
     }
@@ -213,5 +301,22 @@ void EmuWindow_Android_OpenGL::TryPresenting() {
     }
     eglSwapInterval(egl_display, Settings::values.use_vsync_new ? 1 : 0);
     system.GPU().Renderer().TryPresent(0);
-    eglSwapBuffers(egl_display, egl_surface);
+    const EGLBoolean swap_result = eglSwapBuffers(egl_display, egl_surface);
+    static uint64_t frame_counter = 0;
+    ++frame_counter;
+    if (swap_result != EGL_TRUE) {
+        const EGLint egl_error = eglGetError();
+        __android_log_print(ANDROID_LOG_ERROR, "CITRAVR_PORT",
+                            "eglSwapBuffers failed frame=%llu error=0x%x (%s)",
+                            static_cast<unsigned long long>(frame_counter), egl_error,
+                            EglErrorToString(egl_error));
+        presenting_state = PresentingState::Stopped;
+        return;
+    }
+    if ((frame_counter % 300) == 0) {
+        __android_log_print(ANDROID_LOG_INFO, "CITRAVR_PORT",
+                            "eglSwapBuffers ok frame=%llu xr_surface=%d",
+                            static_cast<unsigned long long>(frame_counter),
+                            IsXrSurface() ? 1 : 0);
+    }
 }

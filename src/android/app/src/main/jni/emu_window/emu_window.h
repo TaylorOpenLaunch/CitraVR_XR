@@ -13,11 +13,11 @@ class System;
 
 class EmuWindow_Android : public Frontend::EmuWindow {
 public:
-    EmuWindow_Android(ANativeWindow* surface);
+    EmuWindow_Android(ANativeWindow* surface, bool is_xr_surface);
     ~EmuWindow_Android();
 
     /// Called by the onSurfaceChanges() method to change the surface
-    void OnSurfaceChanged(ANativeWindow* surface);
+    void OnSurfaceChanged(ANativeWindow* surface, bool is_xr_surface);
 
     /// Handles touch event that occur.(Touched or released)
     bool OnTouchEvent(int x, int y, bool pressed);
@@ -32,6 +32,10 @@ public:
     virtual void TryPresenting() {}
 
     virtual void StopPresenting() {}
+
+    bool IsXrSurface() const {
+        return is_xr_surface;
+    }
 
 protected:
     void OnFramebufferSizeChanged();
@@ -50,6 +54,7 @@ protected:
 protected:
     ANativeWindow* render_window{};
     ANativeWindow* host_window{};
+    bool is_xr_surface{};
 
     int window_width{};
     int window_height{};

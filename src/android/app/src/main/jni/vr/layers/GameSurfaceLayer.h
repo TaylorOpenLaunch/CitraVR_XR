@@ -127,6 +127,7 @@ public:
      * Overrides the normal surface passed by Citra
      */
     void SetSurface(const jobject activityObject) const;
+    void RecreateSwapchainAndSurface(const jobject activityObject);
 
     /** Called once-per-frame. Populates the layer list to show the
      *  top panel as a single stereo layer.

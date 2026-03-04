@@ -925,10 +925,24 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         Log.debug("[EmulationFragment] Surface changed. Resolution: " + width + "x" + height)
+        if (VRUtils.isVR(emulationActivity)) {
+            AndroidLog.i(
+                PORT_TAG,
+                "EmulationFragment ignoring SurfaceHolder surfaceChanged in VR mode; preserving XR swapchain surface"
+            )
+            return
+        }
         emulationState?.newSurface(holder.surface, !VRUtils.isVR(emulationActivity))
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        if (VRUtils.isVR(emulationActivity)) {
+            AndroidLog.i(
+                PORT_TAG,
+                "EmulationFragment ignoring SurfaceHolder surfaceDestroyed in VR mode; XR swapchain surface lifecycle is managed by GameSurfaceLayer"
+            )
+            return
+        }
         emulationState?.clearSurface()
     }
 
@@ -1089,7 +1103,11 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
         }
 
         private fun runWithValidSurface() {
-            NativeLibrary.surfaceChanged(surface!!, isVrSurface)
+            NativeLibrary.surfaceChanged(surface!!, !isVrSurface)
+            AndroidLog.i(
+                PORT_TAG,
+                "EmulationState.runWithValidSurface surfaceAssigned isVrSurface=$isVrSurface shouldReleaseSurface=${!isVrSurface}"
+            )
             when (state) {
                 State.STOPPED -> {
                     if (!shouldStartEmulation || gamePath.isBlank()) {

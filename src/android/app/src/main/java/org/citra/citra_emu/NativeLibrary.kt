@@ -11,11 +11,14 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Html
 import android.text.method.LinkMovementMethod
 import android.view.Surface
 import android.view.View
 import android.widget.TextView
+import android.widget.Toast
 import androidx.annotation.Keep
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.DialogFragment
@@ -351,10 +354,37 @@ object NativeLibrary {
         }
 
         emulationActivity.runOnUiThread {
+            if (emulationActivity is VrActivity) {
+                val vrActivity = emulationActivity
+                val captionId = getLoaderErrorCaptionId(resultCode)
+                val title = vrActivity.getString(captionId)
+                val message = vrActivity.getString(R.string.redump_games)
+                Log.warning("[NativeLibrary] VR load failure (resultCode=$resultCode): $title; returning to MainActivity.")
+                val shownInVr = VrErrorMessageLayer.sVrErrorMessageLayer.get()
+                    ?.showErrorMessage(title, message) ?: false
+                if (!shownInVr) {
+                    Toast.makeText(vrActivity.applicationContext, title, Toast.LENGTH_LONG)
+                        .show()
+                }
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (!vrActivity.isFinishing) {
+                        vrActivity.quitToMenu()
+                    }
+                }, 350)
+                return@runOnUiThread
+            }
             EmulationErrorDialogFragment.newInstance(resultCode).showNow(
                 emulationActivity.supportFragmentManager,
                 EmulationErrorDialogFragment.TAG
             )
+        }
+    }
+
+    private fun getLoaderErrorCaptionId(resultCode: Int): Int {
+        return if (resultCode == EmulationErrorDialogFragment.ErrorLoader_ErrorEncrypted) {
+            R.string.loader_error_encrypted
+        } else {
+            R.string.loader_error_invalid_format
         }
     }
 

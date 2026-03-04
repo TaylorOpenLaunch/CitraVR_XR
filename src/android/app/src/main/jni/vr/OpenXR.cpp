@@ -36,6 +36,7 @@ License     :   Licensed under GPLv3 or any later version.
 
 namespace {
 std::unordered_set<std::string> gEnabledExtensions;
+bool                            gIsAndroidXrRuntime = false;
 
 const char* XrResultToSymbol(const XrResult result) {
     switch (result) {
@@ -156,6 +157,8 @@ bool       OpenXrIsExtensionEnabled(const char* extensionName) {
     }
     return gEnabledExtensions.find(extensionName) != gEnabledExtensions.end();
 }
+
+bool OpenXrIsAndroidXrRuntime() { return gIsAndroidXrRuntime; }
 
 void OXR_CheckErrors(XrResult result, const char* function, bool failOnError) {
           if (XR_FAILED(result)) {
@@ -392,10 +395,16 @@ XrInstance XrInstanceCreate(JavaVM* jvm, jobject activityObject) {
     initResult                        = xrGetInstanceProperties(instanceLocal, &instanceInfo);
     LogXrCall("xrGetInstanceProperties", initResult, instanceLocal);
     if (XR_SUCCEEDED(initResult)) {
+        const std::string runtimeName(instanceInfo.runtimeName);
+        gIsAndroidXrRuntime = runtimeName.find("Android XR") != std::string::npos;
         XR_DIAG_LOGI("Runtime=%s version=%u.%u.%u", instanceInfo.runtimeName,
                      XR_VERSION_MAJOR(instanceInfo.runtimeVersion),
                      XR_VERSION_MINOR(instanceInfo.runtimeVersion),
                      XR_VERSION_PATCH(instanceInfo.runtimeVersion));
+        XR_PORT_LOGI("Runtime detection: isAndroidXrRuntime=%s",
+                     gIsAndroidXrRuntime ? "true" : "false");
+    } else {
+        gIsAndroidXrRuntime = false;
     }
 
     return instanceLocal;
@@ -784,4 +793,5 @@ void OpenXr::Shutdown() {
     }
 
     gEnabledExtensions.clear();
+    gIsAndroidXrRuntime = false;
 }

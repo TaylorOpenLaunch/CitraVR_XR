@@ -25,6 +25,11 @@ License     :   Licensed under GPLv3 or any later version.
 
 namespace {
 bool gDisableActionPolling = false;
+#if defined(CITRAVR_DISABLE_XR_CONTROLLER_CHECK) && CITRAVR_DISABLE_XR_CONTROLLER_CHECK
+constexpr bool kDisableXrControllerSetup = true;
+#else
+constexpr bool kDisableXrControllerSetup = false;
+#endif
 
 const char* ToResultString(const XrResult result) {
     static thread_local char buffer[XR_MAX_RESULT_STRING_SIZE];
@@ -126,6 +131,13 @@ XrSpace CreateActionSpace(const XrSession& session, XrAction poseAction, XrPath 
 } // anonymous namespace
 
 InputStateStatic::InputStateStatic(const XrInstance& instance, const XrSession& session) {
+    if (kDisableXrControllerSetup) {
+        gDisableActionPolling = true;
+        XR_PORT_LOGW(
+            "XR controller checks disabled by build flag; skipping action set/controller binding setup");
+        return;
+    }
+
     // Create action set.
     {
         XrActionSetCreateInfo actionSetInfo{XR_TYPE_ACTION_SET_CREATE_INFO};
@@ -243,30 +255,54 @@ InputStateStatic::InputStateStatic(const XrInstance& instance, const XrSession& 
 }
 
 InputStateStatic::~InputStateStatic() {
-    OXR(xrDestroyAction(mLeftHandIndexTriggerAction));
-    mLeftHandIndexTriggerAction = XR_NULL_HANDLE;
-    OXR(xrDestroyAction(mRightHandIndexTriggerAction));
-    mRightHandIndexTriggerAction = XR_NULL_HANDLE;
-    OXR(xrDestroyAction(mLeftMenuButtonAction));
-    mLeftMenuButtonAction = XR_NULL_HANDLE;
-    OXR(xrDestroyAction(mAButtonAction));
-    mAButtonAction = XR_NULL_HANDLE;
-    OXR(xrDestroyAction(mBButtonAction));
-    mBButtonAction = XR_NULL_HANDLE;
-    OXR(xrDestroyAction(mXButtonAction));
-    mXButtonAction = XR_NULL_HANDLE;
-    OXR(xrDestroyAction(mYButtonAction));
-    mYButtonAction = XR_NULL_HANDLE;
-    OXR(xrDestroyAction(mHandPoseAction));
-    mHandPoseAction = XR_NULL_HANDLE;
-    OXR(xrDestroyAction(mThumbStickAction));
-    mThumbStickAction = XR_NULL_HANDLE;
-    OXR(xrDestroyAction(mThumbClickAction));
-    mThumbClickAction = XR_NULL_HANDLE;
-    OXR(xrDestroyAction(mThumbRestTouchAction));
-    mThumbRestTouchAction = XR_NULL_HANDLE;
-    OXR(xrDestroyAction(mSqueezeTriggerAction));
-    mSqueezeTriggerAction = XR_NULL_HANDLE;
+    if (mLeftHandIndexTriggerAction != XR_NULL_HANDLE) {
+        OXR(xrDestroyAction(mLeftHandIndexTriggerAction));
+        mLeftHandIndexTriggerAction = XR_NULL_HANDLE;
+    }
+    if (mRightHandIndexTriggerAction != XR_NULL_HANDLE) {
+        OXR(xrDestroyAction(mRightHandIndexTriggerAction));
+        mRightHandIndexTriggerAction = XR_NULL_HANDLE;
+    }
+    if (mLeftMenuButtonAction != XR_NULL_HANDLE) {
+        OXR(xrDestroyAction(mLeftMenuButtonAction));
+        mLeftMenuButtonAction = XR_NULL_HANDLE;
+    }
+    if (mAButtonAction != XR_NULL_HANDLE) {
+        OXR(xrDestroyAction(mAButtonAction));
+        mAButtonAction = XR_NULL_HANDLE;
+    }
+    if (mBButtonAction != XR_NULL_HANDLE) {
+        OXR(xrDestroyAction(mBButtonAction));
+        mBButtonAction = XR_NULL_HANDLE;
+    }
+    if (mXButtonAction != XR_NULL_HANDLE) {
+        OXR(xrDestroyAction(mXButtonAction));
+        mXButtonAction = XR_NULL_HANDLE;
+    }
+    if (mYButtonAction != XR_NULL_HANDLE) {
+        OXR(xrDestroyAction(mYButtonAction));
+        mYButtonAction = XR_NULL_HANDLE;
+    }
+    if (mHandPoseAction != XR_NULL_HANDLE) {
+        OXR(xrDestroyAction(mHandPoseAction));
+        mHandPoseAction = XR_NULL_HANDLE;
+    }
+    if (mThumbStickAction != XR_NULL_HANDLE) {
+        OXR(xrDestroyAction(mThumbStickAction));
+        mThumbStickAction = XR_NULL_HANDLE;
+    }
+    if (mThumbClickAction != XR_NULL_HANDLE) {
+        OXR(xrDestroyAction(mThumbClickAction));
+        mThumbClickAction = XR_NULL_HANDLE;
+    }
+    if (mThumbRestTouchAction != XR_NULL_HANDLE) {
+        OXR(xrDestroyAction(mThumbRestTouchAction));
+        mThumbRestTouchAction = XR_NULL_HANDLE;
+    }
+    if (mSqueezeTriggerAction != XR_NULL_HANDLE) {
+        OXR(xrDestroyAction(mSqueezeTriggerAction));
+        mSqueezeTriggerAction = XR_NULL_HANDLE;
+    }
 
     if (mLeftHandSpace != XR_NULL_HANDLE) {
         OXR(xrDestroySpace(mLeftHandSpace));
@@ -348,8 +384,7 @@ void InputStateFrame::SyncButtonsAndThumbSticks(
     if (gDisableActionPolling) {
         static bool sLoggedInputPollingDisabled = false;
         if (!sLoggedInputPollingDisabled) {
-            XR_PORT_LOGW(
-                "Disabling controller action polling after XR_ERROR_PATH_UNSUPPORTED on this runtime");
+            XR_PORT_LOGW("Controller action polling disabled (build flag or runtime fallback)");
             sLoggedInputPollingDisabled = true;
         }
         return;
