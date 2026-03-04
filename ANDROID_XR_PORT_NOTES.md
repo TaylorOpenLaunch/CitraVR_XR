@@ -204,3 +204,21 @@ Verification snapshot (headset, DQ7 launch):
 - Startup latch error count in controlled run after this follow-up fix:
   - `latch_total=166` (all before first `doFrame presenting`)
   - previous comparable run before this follow-up fix: `latch_total=440`
+
+## Pause-state render fallback patch (2026-03-04)
+- Problem seen in headset logs during black-screen sessions:
+  - `doFrame skipped (... pause_emulation=true ...)`
+  - repeated `Failed to latch buffer in OpenXRHandler: main`
+- Patch (commit `ecec2e422` on `androidxr-experiment`):
+  - `NativeLibrary_doFrame` now calls `TryPresenting()` for XR surfaces even while `pause_emulation=true`, instead of always returning early.
+  - Added explicit transition logs in native pause hooks:
+    - `NativeLibrary_pauseEmulation: ...`
+    - `NativeLibrary_unPauseEmulation: ...`
+- File changed:
+  - `src/android/app/src/main/jni/native.cpp`
+- Installed build verification on headset:
+  - `CitraVR (Beta) Version: "050a3a23a-debug" (prev) -> "ecec2e422-debug" (current)`
+
+Latest controlled relaunch observations:
+- OpenXR init/session/swapchain sequence still succeeds.
+- In adb-driven launch capture, activity became non-visible shortly after startup (`handleAppVisibility ... visible = false`), so this run did not exercise the sustained `doFrame` path long enough for final latch-count comparison.
