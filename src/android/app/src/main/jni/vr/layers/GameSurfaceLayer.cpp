@@ -308,41 +308,43 @@ void GameSurfaceLayer::FrameTopPanel(const XrSpace& space, std::vector<XrComposi
     // Prevent a seam between the top and bottom view
     constexpr uint32_t verticalBorderTex = 1;
     if (OpenXrIsAndroidXrRuntime()) {
-        // Android XR fallback: use one conservative quad layer for both eyes to avoid
-        // runtime-specific issues with per-eye quads, cropping, and alpha blend flags.
-        XrCompositionLayerQuad layer = {};
-        layer.type                   = XR_TYPE_COMPOSITION_LAYER_QUAD;
-        layer.layerFlags             = 0;
-        layer.space                  = space;
-        layer.eyeVisibility          = XR_EYE_VISIBILITY_BOTH;
+        // Android XR fallback: keep conservative flags/geometry, but submit
+        // per-eye quads to preserve stereo instead of a mono BOTH-eye quad.
+        for (uint32_t eye = 0; eye < NUM_EYES; eye++) {
+            XrCompositionLayerQuad layer = {};
+            layer.type                   = XR_TYPE_COMPOSITION_LAYER_QUAD;
+            layer.layerFlags             = 0;
+            layer.space                  = space;
+            layer.eyeVisibility          = eye == 0 ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
 
-        memset(&layer.subImage, 0, sizeof(XrSwapchainSubImage));
-        layer.subImage.swapchain               = mSwapchain.mHandle;
-        layer.subImage.imageRect.offset.x      = 0;
-        layer.subImage.imageRect.offset.y      = 0;
-        layer.subImage.imageRect.extent.width  = static_cast<int32_t>(mSwapchain.mWidth);
-        layer.subImage.imageRect.extent.height = static_cast<int32_t>(mSwapchain.mHeight);
-        layer.subImage.imageArrayIndex         = 0;
+            memset(&layer.subImage, 0, sizeof(XrSwapchainSubImage));
+            layer.subImage.swapchain               = mSwapchain.mHandle;
+            layer.subImage.imageRect.offset.x      = eye == 0 ? 0 : static_cast<int32_t>(mTopPanel.mWidth);
+            layer.subImage.imageRect.offset.y      = 0;
+            layer.subImage.imageRect.extent.width  = static_cast<int32_t>(mTopPanel.mWidth);
+            layer.subImage.imageRect.extent.height = static_cast<int32_t>(mTopPanel.mHeight - verticalBorderTex);
+            layer.subImage.imageArrayIndex         = 0;
 
-        layer.pose = mTopPanel.mPanelFromWorld;
-        const auto scale =
-            GetDensityScaleForSize(mSwapchain.mWidth, mSwapchain.mHeight, 1.0f, mResolutionFactor);
-        layer.size.width  = scale.x;
-        layer.size.height = scale.y;
+            layer.pose = mTopPanel.mPanelFromWorld;
+            const auto scale = GetDensityScaleForSize(
+                mTopPanel.mWidth, mTopPanel.mHeight - verticalBorderTex, 1.0f, mResolutionFactor);
+            layer.size.width  = scale.x;
+            layer.size.height = scale.y;
 
-        static bool loggedAndroidXrSafeQuad = false;
-        if (!loggedAndroidXrSafeQuad) {
-            XR_PORT_LOGI(
-                "Android XR safe quad enabled: eye=BOTH rect=(%d,%d %dx%d) size=(%.3f,%.3f) "
-                "flags=0x%llx",
-                layer.subImage.imageRect.offset.x, layer.subImage.imageRect.offset.y,
-                layer.subImage.imageRect.extent.width, layer.subImage.imageRect.extent.height,
-                static_cast<double>(layer.size.width), static_cast<double>(layer.size.height),
-                static_cast<unsigned long long>(layer.layerFlags));
-            loggedAndroidXrSafeQuad = true;
+            layers[layerCount++].mQuad = layer;
         }
 
-        layers[layerCount++].mQuad = layer;
+        static bool loggedAndroidXrStereoSafe = false;
+        if (!loggedAndroidXrStereoSafe) {
+            XR_PORT_LOGI(
+                "Android XR stereo-safe quads enabled: leftRect=(0,0 %dx%d) rightRect=(%d,0 %dx%d) flags=0x0",
+                static_cast<int32_t>(mTopPanel.mWidth),
+                static_cast<int32_t>(mTopPanel.mHeight - verticalBorderTex),
+                static_cast<int32_t>(mTopPanel.mWidth),
+                static_cast<int32_t>(mTopPanel.mWidth),
+                static_cast<int32_t>(mTopPanel.mHeight - verticalBorderTex));
+            loggedAndroidXrStereoSafe = true;
+        }
         return;
     }
 

@@ -187,6 +187,22 @@ open class EmulationActivity : AppCompatActivity() {
         if (!NativeLibrary.isRunning()) {
             return false
         }
+        val isVrMode = VRUtils.isVR(this)
+        val inputDevice = event.device
+            ?: // Controller was disconnected
+            return false
+        val isKeyboardSource =
+            (inputDevice.sources and InputDevice.SOURCE_KEYBOARD) == InputDevice.SOURCE_KEYBOARD
+
+        // In VR, keyboard-originated back/escape events can tear down activity state.
+        // Consume them instead of routing through Android back handling.
+        if (isVrMode && isKeyboardSource &&
+            event.action == KeyEvent.ACTION_DOWN &&
+            (event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_ESCAPE)
+        ) {
+            Log.info("VR input guard: consumed keyboard key ${event.keyCode} to avoid shutdown")
+            return true
+        }
 
         val button =
             preferences.getInt(InputBindingSetting.getInputButtonKey(event.keyCode), VRUtils.ButtonType.androidToNativeLibrary(event.keyCode) ?: event.keyCode)
@@ -196,11 +212,14 @@ open class EmulationActivity : AppCompatActivity() {
                 // On some devices, the back gesture / button press is not intercepted by androidx
                 // and fails to open the emulation menu. So we're stuck running deprecated code to
                 // cover for either a fault on androidx's side or in OEM skins (MIUI at least)
-                if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                if (!isVrMode && event.keyCode == KeyEvent.KEYCODE_BACK) {
                     onBackPressed()
                 }
 
-                hotkeyUtility.handleHotkey(button)
+                // Avoid accidental close/pause hotkeys from XR keyboard inputs.
+                if (!(isVrMode && isKeyboardSource)) {
+                    hotkeyUtility.handleHotkey(button)
+                }
 
                 // Normal key events.
                 NativeLibrary.ButtonState.PRESSED
@@ -209,10 +228,7 @@ open class EmulationActivity : AppCompatActivity() {
             KeyEvent.ACTION_UP -> NativeLibrary.ButtonState.RELEASED
             else -> return false
         }
-        val input = event.device
-            ?: // Controller was disconnected
-            return false
-        return NativeLibrary.onGamePadEvent(input.descriptor, button, action)
+        return NativeLibrary.onGamePadEvent(inputDevice.descriptor, button, action)
     }
 
     private fun onAmiiboSelected(selectedFile: String) {
