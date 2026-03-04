@@ -24,7 +24,6 @@ import org.citra.citra_emu.fragments.EmulationFragment.Companion
 import org.citra.citra_emu.ui.main.MainActivity
 import org.citra.citra_emu.utils.EmulationMenuSettings
 import org.citra.citra_emu.utils.Log
-import kotlin.system.exitProcess
 
 
 class VrActivity : EmulationActivity() {
@@ -70,13 +69,18 @@ class VrActivity : EmulationActivity() {
 
     override fun onDestroy() {
        Log.info("VR [Java] onDestroy");
+        AndroidLog.i(
+            PORT_TAG,
+            "VrActivity.onDestroy finishing=$isFinishing changingConfig=$isChangingConfigurations " +
+                "handleValid=${mHandle != 0L}"
+        )
         currentActivity = null
+        hasRun = false
         if (mHandle != 0L) {
             nativeOnDestroy(mHandle)
             mHandle = 0L
         }
         super.onDestroy()
-        exitProcess(0)
     }
 
     public override fun onStart() {
