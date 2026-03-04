@@ -307,6 +307,45 @@ void GameSurfaceLayer::FrameTopPanel(const XrSpace& space, std::vector<XrComposi
                                      const float& immersiveModeFactor) {
     // Prevent a seam between the top and bottom view
     constexpr uint32_t verticalBorderTex = 1;
+    if (OpenXrIsAndroidXrRuntime()) {
+        // Android XR fallback: use one conservative quad layer for both eyes to avoid
+        // runtime-specific issues with per-eye quads, cropping, and alpha blend flags.
+        XrCompositionLayerQuad layer = {};
+        layer.type                   = XR_TYPE_COMPOSITION_LAYER_QUAD;
+        layer.layerFlags             = 0;
+        layer.space                  = space;
+        layer.eyeVisibility          = XR_EYE_VISIBILITY_BOTH;
+
+        memset(&layer.subImage, 0, sizeof(XrSwapchainSubImage));
+        layer.subImage.swapchain               = mSwapchain.mHandle;
+        layer.subImage.imageRect.offset.x      = 0;
+        layer.subImage.imageRect.offset.y      = 0;
+        layer.subImage.imageRect.extent.width  = static_cast<int32_t>(mSwapchain.mWidth);
+        layer.subImage.imageRect.extent.height = static_cast<int32_t>(mSwapchain.mHeight);
+        layer.subImage.imageArrayIndex         = 0;
+
+        layer.pose = mTopPanel.mPanelFromWorld;
+        const auto scale =
+            GetDensityScaleForSize(mSwapchain.mWidth, mSwapchain.mHeight, 1.0f, mResolutionFactor);
+        layer.size.width  = scale.x;
+        layer.size.height = scale.y;
+
+        static bool loggedAndroidXrSafeQuad = false;
+        if (!loggedAndroidXrSafeQuad) {
+            XR_PORT_LOGI(
+                "Android XR safe quad enabled: eye=BOTH rect=(%d,%d %dx%d) size=(%.3f,%.3f) "
+                "flags=0x%llx",
+                layer.subImage.imageRect.offset.x, layer.subImage.imageRect.offset.y,
+                layer.subImage.imageRect.extent.width, layer.subImage.imageRect.extent.height,
+                static_cast<double>(layer.size.width), static_cast<double>(layer.size.height),
+                static_cast<unsigned long long>(layer.layerFlags));
+            loggedAndroidXrSafeQuad = true;
+        }
+
+        layers[layerCount++].mQuad = layer;
+        return;
+    }
+
     const bool         userWantsCylinder = (GetCylinderSysprop() != 0) || (mImmersiveMode > 0);
 #ifdef XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME
     const bool cylinderSupported = OpenXrIsExtensionEnabled(
