@@ -356,6 +356,29 @@ void EmuWindow_Android_OpenGL::TryPresenting() {
     }
     eglSwapInterval(egl_display, Settings::values.use_vsync_new ? 1 : 0);
     system.GPU().Renderer().TryPresent(0);
+
+    // XR bring-up diagnostic: draw a small flashing corner marker so we can distinguish
+    // "compositor is receiving frames" from "game content itself is black".
+    if (IsXrSurface()) {
+        static uint64_t xr_overlay_counter = 0;
+        ++xr_overlay_counter;
+        const bool green = ((xr_overlay_counter / 30) % 2) == 0;
+        const int marker_w = std::max(32, window_width / 10);
+        const int marker_h = std::max(32, window_height / 10);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(0, 0, marker_w, marker_h);
+        glClearColor(green ? 0.05f : 0.05f, green ? 0.90f : 0.10f, green ? 0.10f : 0.90f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glDisable(GL_SCISSOR_TEST);
+        if (xr_overlay_counter == 1 || (xr_overlay_counter % 600) == 0) {
+            __android_log_print(
+                ANDROID_LOG_INFO, "CITRAVR_PORT",
+                "XR debug overlay marker active frame=%llu size=%dx%d marker=%dx%d",
+                static_cast<unsigned long long>(xr_overlay_counter), window_width, window_height,
+                marker_w, marker_h);
+        }
+    }
+
     const EGLBoolean swap_result = eglSwapBuffers(egl_display, egl_surface);
     static uint64_t frame_counter = 0;
     ++frame_counter;
