@@ -7,6 +7,7 @@ package org.citra.citra_emu.ui.main
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log as AndroidLog
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup.MarginLayoutParams
@@ -88,6 +89,7 @@ class MainActivity : AppCompatActivity(), ThemeProvider {
 
         ThemeUtil.setTheme(this)
         super.onCreate(savedInstanceState)
+        logLaunchIntent()
 
         VrMainActivityUtils.doVersionUpdates(applicationContext)
 
@@ -401,5 +403,25 @@ class MainActivity : AppCompatActivity(), ThemeProvider {
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()
         )
+    }
+
+    private fun logLaunchIntent() {
+        val launchIntent = intent
+        val categories = launchIntent?.categories?.joinToString(",") ?: "<none>"
+        AndroidLog.i(
+            PORT_TAG,
+            "MainActivity.onCreate action=${launchIntent?.action ?: "<none>"} categories=$categories data=${summarize(launchIntent?.dataString)} selectedGamePresent=${!launchIntent?.getStringExtra("SelectedGame").isNullOrBlank()} selectedTitlePresent=${!launchIntent?.getStringExtra("SelectedTitle").isNullOrBlank()} twoInstanceError=${launchIntent?.getBooleanExtra(VrActivity.EXTRA_ERROR_TWO_INSTANCES, false) == true}"
+        )
+    }
+
+    private fun summarize(value: String?): String {
+        if (value.isNullOrBlank()) {
+            return "<none>"
+        }
+        return if (value.length > 120) "${value.take(120)}..." else value
+    }
+
+    companion object {
+        private const val PORT_TAG = "CITRAVR_PORT"
     }
 }

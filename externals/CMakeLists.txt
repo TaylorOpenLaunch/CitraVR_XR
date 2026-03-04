@@ -99,7 +99,11 @@ endif()
 
 # Oaknut
 if ("arm64" IN_LIST ARCHITECTURE)
+    # Oaknut's test target requires a packaged Catch2 config. Keep tests off in embedded builds.
+    set(OAKNUT_PREV_BUILD_TESTING ${BUILD_TESTING})
+    set(BUILD_TESTING OFF)
     add_subdirectory(oaknut EXCLUDE_FROM_ALL)
+    set(BUILD_TESTING ${OAKNUT_PREV_BUILD_TESTING})
 endif()
 
 # Dynarmic
@@ -433,4 +437,3 @@ endif()
 if (ANDROID)
     add_subdirectory(openxr-sdk-src)
 endif()
-

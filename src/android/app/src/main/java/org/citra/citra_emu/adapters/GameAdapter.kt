@@ -7,6 +7,7 @@ package org.citra.citra_emu.adapters
 import android.net.Uri
 import android.os.SystemClock
 import android.text.TextUtils
+import android.util.Log as AndroidLog
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -68,7 +69,11 @@ class GameAdapter(private val activity: AppCompatActivity) :
         lastClickTime = SystemClock.elapsedRealtime()
 
         val holder = view.tag as GameViewHolder
-        gameExists(holder)
+        val exists = gameExists(holder)
+        AndroidLog.i(
+            PORT_TAG,
+            "Home game select -> VR launch requested: title='${holder.game.title}' pathPresent=${holder.game.path.isNotBlank()} installed=${holder.game.isInstalled} existsCheck=$exists path=${summarize(holder.game.path)}"
+        )
 
         val preferences =
             PreferenceManager.getDefaultSharedPreferences(CitraApplication.appContext)
@@ -204,5 +209,16 @@ class GameAdapter(private val activity: AppCompatActivity) :
         override fun areContentsTheSame(oldItem: Game, newItem: Game): Boolean {
             return oldItem == newItem
         }
+    }
+
+    private fun summarize(value: String?): String {
+        if (value.isNullOrBlank()) {
+            return "<none>"
+        }
+        return if (value.length > 120) "${value.take(120)}..." else value
+    }
+
+    companion object {
+        private const val PORT_TAG = "CITRAVR_PORT"
     }
 }

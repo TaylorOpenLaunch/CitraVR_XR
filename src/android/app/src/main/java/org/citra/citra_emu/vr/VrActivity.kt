@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log as AndroidLog
 import android.view.Display
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -33,6 +34,17 @@ class VrActivity : EmulationActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         Log.info("VR [Java] onCreate()");
         super.onCreate(savedInstanceState)
+        AndroidLog.i(PORT_TAG, "VrActivity.onCreate ${describeLaunchIntent(intent)}")
+        if (!hasBootableGameIntent()) {
+            Log.warning("VR [Java] Missing selected game path; redirecting to MainActivity.")
+            AndroidLog.w(PORT_TAG, "VrActivity redirecting to MainActivity because no bootable game payload was provided")
+            val relaunchMainIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            startActivity(relaunchMainIntent)
+            finish()
+            return
+        }
         if (hasRun) {
             Log.info("VR [Java] VRActivity already existed")
             finish()
@@ -47,7 +59,13 @@ class VrActivity : EmulationActivity() {
         }
         hasRun = true
         currentActivity = this
+        AndroidLog.i(PORT_TAG, "VrActivity accepted launch payload and will initialize native VR path")
         mHandle = nativeOnCreate()
+    }
+
+    private fun hasBootableGameIntent(): Boolean {
+        val selectedGame = intent?.getStringExtra("SelectedGame")
+        return !selectedGame.isNullOrBlank() || intent?.data != null
     }
 
     override fun onDestroy() {
@@ -177,6 +195,10 @@ class VrActivity : EmulationActivity() {
             context: Context, gamePath: String?,
             gameTitle: String?
         ) {
+            AndroidLog.i(
+                PORT_TAG,
+                "VrActivity.launch called from=${context.javaClass.simpleName} title='${summarize(gameTitle)}' pathPresent=${!gamePath.isNullOrBlank()} path=${summarize(gamePath)}"
+            )
             val intent = Intent(context, VrActivity::class.java)
             val mainDisplayId = getMainDisplay(context)
             if (mainDisplayId < 0) {
@@ -187,15 +209,21 @@ class VrActivity : EmulationActivity() {
                 Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or
                         Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             )
-               intent.putExtra("SelectedGame", gamePath);
-              intent.putExtra("SelectedTitle", gameTitle);
-            (context as Activity).finish()
+            intent.putExtra("SelectedGame", gamePath)
+            intent.putExtra("SelectedTitle", gameTitle)
+            if (context is Activity) {
+                context.finish()
+            }
             if (context is ContextWrapper) {
                 val baseContext = context.baseContext
                 baseContext.startActivity(intent, options.toBundle())
             } else {
                 context.startActivity(intent, options.toBundle())
             }
+            AndroidLog.i(
+                PORT_TAG,
+                "VrActivity.launch started intent displayId=$mainDisplayId title='${summarize(gameTitle)}'"
+            )
         }
 
         private fun getMainDisplay(context: Context): Int {
@@ -208,5 +236,28 @@ class VrActivity : EmulationActivity() {
             }
             return -1
         }
+
+        private fun summarize(value: String?): String {
+            if (value.isNullOrBlank()) {
+                return "<none>"
+            }
+            return if (value.length > 120) "${value.take(120)}..." else value
+        }
+
+        private const val PORT_TAG = "CITRAVR_PORT"
+    }
+
+    private fun describeLaunchIntent(launchIntent: Intent?): String {
+        val categories = launchIntent?.categories?.joinToString(",") ?: "<none>"
+        val selectedGame = launchIntent?.getStringExtra("SelectedGame")
+        val selectedTitle = launchIntent?.getStringExtra("SelectedTitle")
+        return "action=${launchIntent?.action ?: "<none>"} categories=$categories data=${summarize(launchIntent?.dataString)} selectedGamePresent=${!selectedGame.isNullOrBlank()} selectedTitlePresent=${!selectedTitle.isNullOrBlank()}"
+    }
+
+    private fun summarize(value: String?): String {
+        if (value.isNullOrBlank()) {
+            return "<none>"
+        }
+        return if (value.length > 120) "${value.take(120)}..." else value
     }
 }

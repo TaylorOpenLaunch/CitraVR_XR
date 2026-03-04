@@ -7,12 +7,14 @@ package org.citra.citra_emu.fragments
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.DialogInterface
+import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log as AndroidLog
 import android.view.Choreographer
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -57,6 +59,7 @@ import org.citra.citra_emu.features.settings.model.SettingsViewModel
 import org.citra.citra_emu.features.settings.ui.SettingsActivity
 import org.citra.citra_emu.features.settings.utils.SettingsFile
 import org.citra.citra_emu.model.Game
+import org.citra.citra_emu.ui.main.MainActivity
 import org.citra.citra_emu.utils.DirectoryInitialization
 import org.citra.citra_emu.utils.DirectoryInitialization.DirectoryInitializationState
 import org.citra.citra_emu.utils.EmulationMenuSettings
@@ -84,6 +87,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
     private val args by navArgs<EmulationFragmentArgs>()
 
     private lateinit var game: Game
+    private var shouldStartEmulation = true
     private lateinit var screenAdjustmentUtil: ScreenAdjustmentUtil
 
     private val emulationViewModel: EmulationViewModel by activityViewModels()
@@ -111,6 +115,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
             intent.getStringExtra("SelectedGame"),
             intent.getStringExtra("SelectedTitle")
         )
+        AndroidLog.i(
+            PORT_TAG,
+            "EmulationFragment.onCreate mode=${if (VRUtils.isVR(activity)) "vr" else "flat"} intentDataPresent=${intentUri != null} selectedGamePresent=${!oldIntentInfo.first.isNullOrBlank()} selectedTitlePresent=${!oldIntentInfo.second.isNullOrBlank()}"
+        )
         var intentGame: Game? = null
         if (intentUri != null) {
             intentGame = if (Game.extensions.contains(FileUtil.getExtension(intentUri))) {
@@ -119,29 +127,67 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
                 null
             }
         } else if (oldIntentInfo.first != null) {
-            val gameUri = Uri.parse(oldIntentInfo.first)
+            val selectedGamePath = oldIntentInfo.first!!
+            val gameUri = Uri.parse(selectedGamePath)
             intentGame = if (Game.extensions.contains(FileUtil.getExtension(gameUri))) {
                 GameHelper.getGame(gameUri, isInstalled = false, addedToLibrary = false)
+            } else if (VRUtils.isVR(activity)) {
+                // Installed-title paths in VR launch extras do not include a ROM extension.
+                val filename = selectedGamePath.substringAfterLast('/').ifBlank { "__selected_game__" }
+                val title = oldIntentInfo.second ?: filename
+                AndroidLog.i(
+                    PORT_TAG,
+                    "EmulationFragment accepting legacy SelectedGame path without extension title='${summarize(title)}' path=${summarize(selectedGamePath)}"
+                )
+                Game(
+                    title = title,
+                    path = selectedGamePath,
+                    filename = filename
+                )
             } else {
                 null
             }
         }
+        if (intentGame != null) {
+            AndroidLog.i(
+                PORT_TAG,
+                "EmulationFragment resolved launch game title='${intentGame.title}' path=${summarize(intentGame.path)}"
+            )
+        } else {
+            AndroidLog.i(PORT_TAG, "EmulationFragment did not resolve a launch game from intent payload")
+        }
 
         try {
             game = args.game ?: intentGame!!
+            AndroidLog.i(
+                PORT_TAG,
+                "EmulationFragment selected game title='${game.title}' path=${summarize(game.path)} shouldStartEmulation=$shouldStartEmulation"
+            )
         } catch (e: NullPointerException) {
-            Toast.makeText(
-                requireContext(),
-                R.string.no_game_present,
-                Toast.LENGTH_SHORT
-            ).show()
-            requireActivity().finish()
-            return
+            if (VRUtils.isVR(activity)) {
+                Log.warning("[EmulationFragment] VR launch without selected game. Returning to MainActivity.")
+                AndroidLog.w(PORT_TAG, "EmulationFragment VR launch missing game -> redirect MainActivity")
+                startActivity(
+                    Intent(requireActivity(), MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    }
+                )
+                requireActivity().finish()
+                return
+            } else {
+                Toast.makeText(
+                    requireContext(),
+                    R.string.no_game_present,
+                    Toast.LENGTH_SHORT
+                ).show()
+                requireActivity().finish()
+                return
+            }
         }
 
         // So this fragment doesn't restart on configuration changes; i.e. rotation.
         retainInstance = true
-        emulationState = EmulationState(game.path)
+        emulationState = EmulationState(game.path, shouldStartEmulation)
         emulationActivity = requireActivity() as EmulationActivity
         screenAdjustmentUtil = ScreenAdjustmentUtil(emulationActivity.windowManager, settingsViewModel.settings)
         EmulationLifecycleUtil.addShutdownHook(hook = { emulationState?.stop() })
@@ -438,6 +484,15 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
     override fun onResume() {
         super.onResume()
         Choreographer.getInstance().postFrameCallback(this)
+        AndroidLog.i(
+            PORT_TAG,
+            "EmulationFragment.onResume shouldStartEmulation=$shouldStartEmulation gamePathPresent=${game.path.isNotBlank()} mode=${if (VRUtils.isVR(activity)) "vr" else "flat"}"
+        )
+
+        if (!shouldStartEmulation) {
+            Log.debug("[EmulationFragment] VR shell mode active; skipping emulation startup")
+            return
+        }
 
         if (DirectoryInitialization.areCitraDirectoriesReady()) {
             emulationState?.run(emulationActivity.isActivityRecreated)
@@ -918,7 +973,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
         }
     }
 
-    private class EmulationState(private val gamePath: String) {
+    private class EmulationState(
+        private val gamePath: String,
+        private val shouldStartEmulation: Boolean = true
+    ) {
         private var state: State
         private var surface: Surface? = null
         private var isVrSurface : Boolean = false;
@@ -1034,6 +1092,14 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
             NativeLibrary.surfaceChanged(surface!!, isVrSurface)
             when (state) {
                 State.STOPPED -> {
+                    if (!shouldStartEmulation || gamePath.isBlank()) {
+                        Log.warning("[EmulationFragment] No bootable game path. Skipping emulation start.")
+                        AndroidLog.w(
+                            PORT_TAG,
+                            "EmulationState.runWithValidSurface skipping native run: shouldStartEmulation=$shouldStartEmulation gamePathPresent=${gamePath.isNotBlank()} isVrSurface=$isVrSurface"
+                        )
+                        return
+                    }
                     Thread({
                         Log.debug("[EmulationFragment] Starting emulation thread.")
                         NativeLibrary.run(gamePath)
@@ -1059,7 +1125,15 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback, Choreographer.Fram
         }
     }
 
+    private fun summarize(value: String?): String {
+        if (value.isNullOrBlank()) {
+            return "<none>"
+        }
+        return if (value.length > 120) "${value.take(120)}..." else value
+    }
+
     companion object {
         private val perfStatsUpdateHandler = Handler(Looper.myLooper()!!)
+        private const val PORT_TAG = "CITRAVR_PORT"
     }
 }
