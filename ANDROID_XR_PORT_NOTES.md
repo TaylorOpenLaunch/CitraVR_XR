@@ -195,3 +195,12 @@ Related commit on `androidxr-experiment`:
   - `src/android/app/src/main/jni/native.cpp`
   - `src/android/app/src/main/jni/emu_window/emu_window_gl.cpp`
   - `src/android/app/src/main/jni/emu_window/emu_window_gl.h`
+
+Verification snapshot (headset, DQ7 launch):
+- Log evidence confirms bootstrap submit:
+  - `TryPresenting bootstrap path: core not powered on, submitting placeholder`
+  - `doFrame bootstrap present (calls=1 ...)`
+  - `bootstrap eglSwapBuffers ok frame=1 xr_surface=1`
+- Startup latch error count in controlled run after this follow-up fix:
+  - `latch_total=166` (all before first `doFrame presenting`)
+  - previous comparable run before this follow-up fix: `latch_total=440`
