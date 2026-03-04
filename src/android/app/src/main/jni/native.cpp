@@ -118,6 +118,34 @@ static void LoadDiskCacheProgress(VideoCore::LoadCallbackStage stage, int progre
 
 static Camera::NDK::Factory* g_ndk_factory{};
 
+static void ApplyAndroidXrPerformanceOverrides(u64 program_id) {
+    if (!s_is_xr_surface || !OpenXrIsAndroidXrRuntime()) {
+        return;
+    }
+
+    constexpr int kAndroidXrCpuClockPercent = 75;
+
+    if (!Settings::values.enable_audio_stretching.GetValue()) {
+        Settings::values.enable_audio_stretching = true;
+        LOG_INFO(Frontend,
+                 "Android XR speed profile: forcing Audio_EnableAudioStretching=true");
+    }
+
+    if (Settings::values.cpu_clock_percentage.GetValue() > kAndroidXrCpuClockPercent) {
+        const int previous_clock = Settings::values.cpu_clock_percentage.GetValue();
+        Settings::values.cpu_clock_percentage = kAndroidXrCpuClockPercent;
+        LOG_INFO(Frontend, "Android XR speed profile: lowering Core_CPUClockPercentage {} -> {}",
+                 previous_clock, kAndroidXrCpuClockPercent);
+    }
+
+    if (program_id == 0x0004000000033500ULL &&
+        Settings::values.shaders_accurate_mul.GetValue()) {
+        Settings::values.shaders_accurate_mul = false;
+        LOG_INFO(Frontend,
+                 "Android XR speed profile: forcing Renderer_ShadersAccurateMul=false for OOT 3D");
+    }
+}
+
 static void TryShutdown() {
     if (!window) {
         return;
@@ -194,6 +222,7 @@ static Core::System::ResultStatus RunCitra(const std::string& filepath) {
         app_loader->ReadProgramId(program_id);
         GameSettings::LoadOverrides(program_id);
     }
+    ApplyAndroidXrPerformanceOverrides(program_id);
     system.ApplySettings();
     Settings::LogSettings();
 
