@@ -61,11 +61,25 @@ void       PrioritizeTid(const int tid) {
               ALOGE("PrioritizeTid() called before session is initialized");
               return;
     }
+#ifdef XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME
+          if (!OpenXrIsExtensionEnabled(XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME)) {
+              XR_PORT_LOGI("Skipping PrioritizeTid: XR_KHR_android_thread_settings unsupported");
+              return;
+          }
+#endif
           PFN_xrSetAndroidApplicationThreadKHR pfnSetAndroidApplicationThreadKHR = NULL;
-          OXR(xrGetInstanceProcAddr(OpenXr::GetInstance(), "xrSetAndroidApplicationThreadKHR",
-                                    (PFN_xrVoidFunction*)(&pfnSetAndroidApplicationThreadKHR)));
+          XrResult result = xrGetInstanceProcAddr(OpenXr::GetInstance(),
+                                                  "xrSetAndroidApplicationThreadKHR",
+                                                  (PFN_xrVoidFunction*)(
+                                                      &pfnSetAndroidApplicationThreadKHR));
+          if (XR_FAILED(result) || pfnSetAndroidApplicationThreadKHR == nullptr) {
+              XR_PORT_LOGW("xrSetAndroidApplicationThreadKHR not available in PrioritizeTid");
+              return;
+          }
 
-          OXR(pfnSetAndroidApplicationThreadKHR(gSession, XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR, tid));
+          result = pfnSetAndroidApplicationThreadKHR(gSession,
+                                                     XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR, tid);
+          OXR_CheckErrors(result, "xrSetAndroidApplicationThreadKHR", false);
           gPriorityTid = tid;
           ALOGD("Setting prio tid from original code {}", vr::gPriorityTid);
 }
@@ -208,7 +222,11 @@ public:
     VRApp(jobject activityObjectGlobalRef)
         : mActivityObject(activityObjectGlobalRef) {}
 
-    ~VRApp() { assert(mLastAppState.mIsStopRequested); }
+    ~VRApp() {
+        if (!mLastAppState.mIsStopRequested) {
+            XR_PORT_LOGW("VRApp destroyed without stop request; continuing shutdown");
+        }
+    }
 
 private:
     class AppState;
@@ -282,14 +300,25 @@ private:
         //////////////////////////////////////////////////
 
         // Create the background layer.
-        assert(VRSettings::values.vr_environment ==
-                   static_cast<int32_t>(VRSettings::VREnvironmentType::VOID) ||
-               VRSettings::values.vr_environment ==
-                   static_cast<int32_t>(VRSettings::VREnvironmentType::PASSTHROUGH));
-        // If user set "Void" in settings, don't render passthrough
-        if (VRSettings::values.vr_environment !=
-            static_cast<int32_t>(VRSettings::VREnvironmentType::VOID)) {
-            mPassthroughLayer = std::make_unique<PassthroughLayer>(gOpenXr->mSession);
+        const int32_t environmentValue = VRSettings::values.vr_environment;
+        const bool    isVoidEnvironment =
+            environmentValue == static_cast<int32_t>(VRSettings::VREnvironmentType::VOID);
+        const bool isPassthroughEnvironment =
+            environmentValue == static_cast<int32_t>(VRSettings::VREnvironmentType::PASSTHROUGH);
+        if (!isVoidEnvironment && !isPassthroughEnvironment) {
+            XR_PORT_LOGW("Unexpected vr_environment=%d. Falling back to VOID.", environmentValue);
+        }
+        // If user set "Void" in settings (or value is unknown), don't render passthrough
+        if (isPassthroughEnvironment) {
+#ifdef XR_FB_PASSTHROUGH_EXTENSION_NAME
+            if (OpenXrIsExtensionEnabled(XR_FB_PASSTHROUGH_EXTENSION_NAME)) {
+                mPassthroughLayer = std::make_unique<PassthroughLayer>(gOpenXr->mSession);
+            } else {
+                XR_PORT_LOGW("Passthrough requested but XR_FB_passthrough is unavailable");
+            }
+#else
+            XR_PORT_LOGW("Passthrough requested but XR_FB_passthrough symbols are unavailable");
+#endif
         }
 
         // Create the game surface layer.
@@ -378,6 +407,12 @@ private:
         {
             XrFrameWaitInfo wfi = {XR_TYPE_FRAME_WAIT_INFO, nullptr};
             OXR(xrWaitFrame(gOpenXr->mSession, &wfi, &frameState));
+            if (mFrameIndex <= 5) {
+                XR_DIAG_LOGI("Frame[%llu] xrWaitFrame predictedDisplayTime=%lld shouldRender=%d",
+                             static_cast<unsigned long long>(mFrameIndex),
+                             static_cast<long long>(frameState.predictedDisplayTime),
+                             static_cast<int>(frameState.shouldRender));
+            }
         }
 
         ////////////////////////////////
@@ -387,6 +422,10 @@ private:
         {
             XrFrameBeginInfo bfd = {XR_TYPE_FRAME_BEGIN_INFO, nullptr};
             OXR(xrBeginFrame(gOpenXr->mSession, &bfd));
+            if (mFrameIndex <= 5) {
+                XR_DIAG_LOGI("Frame[%llu] xrBeginFrame",
+                             static_cast<unsigned long long>(mFrameIndex));
+            }
         }
 
         ///////////////////////////////////////////////////
@@ -490,6 +529,11 @@ private:
                                              static_cast<uint32_t>(layerHeaders.size()),
                                              layerHeaders.data()};
         OXR(xrEndFrame(gOpenXr->mSession, &endFrameInfo));
+        if (mFrameIndex <= 5) {
+            XR_DIAG_LOGI("Frame[%llu] xrEndFrame layerCount=%u",
+                         static_cast<unsigned long long>(mFrameIndex),
+                         static_cast<unsigned int>(layerHeaders.size()));
+        }
     }
 
     void HandleInput(JNIEnv* jni, const InputStateFrame& inputState, AppState& newState) const {
@@ -949,8 +993,8 @@ private:
             sbi.next                         = nullptr;
             sbi.primaryViewConfigurationType = gOpenXr->mViewportConfig.viewConfigurationType;
 
-            XrResult result;
-            OXR(result = xrBeginSession(gOpenXr->mSession, &sbi));
+            XrResult result = xrBeginSession(gOpenXr->mSession, &sbi);
+            OXR_CheckErrors(result, "xrBeginSession", false);
 
             newAppState.mIsXrSessionActive = (result == XR_SUCCESS);
 
@@ -958,35 +1002,68 @@ private:
             // session object.
             if (newAppState.mIsXrSessionActive) {
                 ALOGI("{}(): Entered XR_SESSION_STATE_READY", __func__);
-                PFN_xrPerfSettingsSetPerformanceLevelEXT pfnPerfSettingsSetPerformanceLevelEXT =
-                    NULL;
-                OXR(xrGetInstanceProcAddr(
-                    gOpenXr->mInstance, "xrPerfSettingsSetPerformanceLevelEXT",
-                    (PFN_xrVoidFunction*)(&pfnPerfSettingsSetPerformanceLevelEXT)));
 
-                OXR(pfnPerfSettingsSetPerformanceLevelEXT(gOpenXr->mSession,
-                                                          XR_PERF_SETTINGS_DOMAIN_CPU_EXT,
-                                                          VRSettings::values.cpu_level));
-                OXR(pfnPerfSettingsSetPerformanceLevelEXT(
-                    gOpenXr->mSession, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, kGpuPerfLevel));
-                ALOGI("{}(): Set clock levels to CPU:{}, GPU:{}", __FUNCTION__,
-                      VRSettings::values.cpu_level, kGpuPerfLevel);
-
-                PFN_xrSetAndroidApplicationThreadKHR pfnSetAndroidApplicationThreadKHR = NULL;
-                OXR(xrGetInstanceProcAddr(
-                    gOpenXr->mInstance, "xrSetAndroidApplicationThreadKHR",
-                    (PFN_xrVoidFunction*)(&pfnSetAndroidApplicationThreadKHR)));
-
-                if (vr::gPriorityTid > 0) {
-                    ALOGD("Setting prio tid from main {}", vr::gPriorityTid);
-                    OXR(pfnSetAndroidApplicationThreadKHR(gOpenXr->mSession,
-                                                          XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR,
-                                                          vr::gPriorityTid));
+#ifdef XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME
+                if (OpenXrIsExtensionEnabled(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME)) {
+                    PFN_xrPerfSettingsSetPerformanceLevelEXT pfnPerfSettingsSetPerformanceLevelEXT =
+                        nullptr;
+                    result = xrGetInstanceProcAddr(
+                        gOpenXr->mInstance, "xrPerfSettingsSetPerformanceLevelEXT",
+                        (PFN_xrVoidFunction*)(&pfnPerfSettingsSetPerformanceLevelEXT));
+                    if (XR_SUCCEEDED(result) && pfnPerfSettingsSetPerformanceLevelEXT != nullptr) {
+                        OXR_CheckErrors(
+                            pfnPerfSettingsSetPerformanceLevelEXT(
+                                gOpenXr->mSession, XR_PERF_SETTINGS_DOMAIN_CPU_EXT,
+                                VRSettings::values.cpu_level),
+                            "xrPerfSettingsSetPerformanceLevelEXT(CPU)", false);
+                        OXR_CheckErrors(
+                            pfnPerfSettingsSetPerformanceLevelEXT(
+                                gOpenXr->mSession, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, kGpuPerfLevel),
+                            "xrPerfSettingsSetPerformanceLevelEXT(GPU)", false);
+                        ALOGI("{}(): Set clock levels to CPU:{}, GPU:{}", __FUNCTION__,
+                              VRSettings::values.cpu_level, kGpuPerfLevel);
+                    } else {
+                        XR_PORT_LOGW("Skipping perf level setup: function unavailable");
+                    }
                 } else {
-                    ALOGD("Not setting prio tid from main");
+                    XR_PORT_LOGI("Skipping perf level setup: XR_EXT_performance_settings unsupported");
                 }
-                OXR(pfnSetAndroidApplicationThreadKHR(
-                    gOpenXr->mSession, XR_ANDROID_THREAD_TYPE_APPLICATION_MAIN_KHR, gettid()));
+#else
+                XR_PORT_LOGI("Skipping perf level setup: XR_EXT_performance_settings unavailable");
+#endif
+
+#ifdef XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME
+                if (OpenXrIsExtensionEnabled(XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME)) {
+                    PFN_xrSetAndroidApplicationThreadKHR pfnSetAndroidApplicationThreadKHR = nullptr;
+                    result = xrGetInstanceProcAddr(
+                        gOpenXr->mInstance, "xrSetAndroidApplicationThreadKHR",
+                        (PFN_xrVoidFunction*)(&pfnSetAndroidApplicationThreadKHR));
+                    if (XR_SUCCEEDED(result) && pfnSetAndroidApplicationThreadKHR != nullptr) {
+                        if (vr::gPriorityTid > 0) {
+                            ALOGD("Setting prio tid from main {}", vr::gPriorityTid);
+                            OXR_CheckErrors(pfnSetAndroidApplicationThreadKHR(
+                                                gOpenXr->mSession,
+                                                XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR,
+                                                vr::gPriorityTid),
+                                            "xrSetAndroidApplicationThreadKHR(RendererMain)", false);
+                        } else {
+                            ALOGD("Not setting prio tid from main");
+                        }
+                        OXR_CheckErrors(
+                            pfnSetAndroidApplicationThreadKHR(
+                                gOpenXr->mSession, XR_ANDROID_THREAD_TYPE_APPLICATION_MAIN_KHR,
+                                gettid()),
+                            "xrSetAndroidApplicationThreadKHR(ApplicationMain)", false);
+                    } else {
+                        XR_PORT_LOGW("Skipping thread priority setup: function unavailable");
+                    }
+                } else {
+                    XR_PORT_LOGI(
+                        "Skipping thread priority setup: XR_KHR_android_thread_settings unsupported");
+                }
+#else
+                XR_PORT_LOGI("Skipping thread priority setup: XR_KHR_android_thread_settings unavailable");
+#endif
                 if (mGameSurfaceLayer) {
                     ALOGD("SetSurface");
                     mGameSurfaceLayer->SetSurface(mActivityObject);
@@ -1313,6 +1390,16 @@ Java_org_citra_citra_1emu_vr_ui_VrRibbonLayer_nativeGetStatsOXR(JNIEnv* env, job
     if (vr::gSession == XR_NULL_HANDLE || OpenXr::GetInstance() == XR_NULL_HANDLE) {
         return nullptr;
     }
+
+#ifdef XR_META_PERFORMANCE_METRICS_EXTENSION_NAME
+    if (!OpenXrIsExtensionEnabled(XR_META_PERFORMANCE_METRICS_EXTENSION_NAME)) {
+        XR_PORT_LOGI("Skipping XR stats query: XR_META_performance_metrics unsupported");
+        return nullptr;
+    }
+#else
+    XR_PORT_LOGI("Skipping XR stats query: XR_META_performance_metrics unavailable");
+    return nullptr;
+#endif
 
     static PFN_xrQueryPerformanceMetricsCounterMETA xrQueryPerformanceMetricsCounterMETA = nullptr;
     if (xrQueryPerformanceMetricsCounterMETA == nullptr) {

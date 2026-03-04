@@ -29,8 +29,11 @@
     <uses-feature
         android:name="android.hardware.opengles.aep"
         android:required="true" />
+    <uses-feature
+        android:name="android.software.xr.api.openxr"
+        android:required="false" />
 
-    <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="true" />
+    <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="false" />
     <uses-feature android:name="com.oculus.feature.BOUNDARYLESS_APP" android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -43,6 +46,7 @@
     <!-- This section allows us to avoid pulling Oculus SDK's libopenxr_loader into our app and use the Apache-licensed OpenXR loader instead.
       Khronos' loader will pull in the Oculus implementation from "libopenxr_forwardloader.oculus.so",
       which is a system library resident on the OS image and therefore falls under the GPL "system libraries" exception. -->
+    <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
     <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
     <queries>
         <provider android:authorities="org.khronos.openxr.runtime_broker;org.khronos.openxr.system_runtime_broker" />
@@ -134,6 +138,14 @@
                 <category android:name="com.oculus.intent.category.VR" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="org.khronos.openxr.intent.category.IMMERSIVE_HMD" />
+            </intent-filter>
+            <property
+                android:name="android.window.PROPERTY_XR_ACTIVITY_START_MODE"
+                android:value="XR_ACTIVITY_START_MODE_FULL_SPACE_UNMANAGED" />
         </activity>
 
         <activity

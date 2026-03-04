@@ -51,6 +51,10 @@ public:
     XrAction mThumbClickAction     = XR_NULL_HANDLE;
     XrAction mSqueezeTriggerAction = XR_NULL_HANDLE;
     XrAction mThumbRestTouchAction = XR_NULL_HANDLE;
+
+    // Prevent retry spam when a runtime does not support controller action spaces.
+    bool mLeftHandSpaceUnavailable  = false;
+    bool mRightHandSpaceUnavailable = false;
 };
 
 struct InputStateFrame {

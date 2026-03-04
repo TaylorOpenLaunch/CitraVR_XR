@@ -24,6 +24,58 @@ License     :   Licensed under GPLv3 or any later version.
 #endif
 
 namespace {
+bool gDisableActionPolling = false;
+
+const char* ToResultString(const XrResult result) {
+    static thread_local char buffer[XR_MAX_RESULT_STRING_SIZE];
+    buffer[0] = '\0';
+    const XrInstance instance = OpenXr::GetInstance();
+    if (instance != XR_NULL_HANDLE && xrResultToString(instance, result, buffer) == XR_SUCCESS &&
+        buffer[0] != '\0') {
+        return buffer;
+    }
+    return "XR_RESULT_UNKNOWN";
+}
+
+bool IsRecoverableInputResult(const XrResult result) {
+    switch (result) {
+        case XR_ERROR_PATH_UNSUPPORTED:
+        case XR_ERROR_PATH_INVALID:
+        case XR_ERROR_PATH_FORMAT_INVALID:
+        case XR_ERROR_ACTION_TYPE_MISMATCH:
+        case XR_ERROR_HANDLE_INVALID:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void LogInputFallback(const char* function, const XrResult result, bool& alreadyLogged) {
+    OXR_CheckErrors(result, function, false);
+    if (alreadyLogged) {
+        return;
+    }
+
+    const char* severity = IsRecoverableInputResult(result) ? "recoverable" : "unexpected";
+    XR_PORT_LOGW("%s failed: %d (%s) [%s]; using inactive defaults",
+                 function,
+                 result,
+                 ToResultString(result),
+                 severity);
+    alreadyLogged = true;
+}
+
+XrActionStateBoolean EmptyBooleanState() {
+    XrActionStateBoolean state = {};
+    state.type                 = XR_TYPE_ACTION_STATE_BOOLEAN;
+    return state;
+}
+
+XrActionStateVector2f EmptyVector2fState() {
+    XrActionStateVector2f state = {};
+    state.type                  = XR_TYPE_ACTION_STATE_VECTOR2F;
+    return state;
+}
 
 XrAction CreateAction(XrActionSet actionSet, XrActionType type, const char* actionName,
                       const char* localizedName, int countSubactionPaths = 0,
@@ -62,7 +114,12 @@ XrSpace CreateActionSpace(const XrSession& session, XrAction poseAction, XrPath 
     asci.poseInActionSpace.orientation.w = 1.0f;
     asci.subactionPath                   = subactionPath;
     XrSpace actionSpace                  = XR_NULL_HANDLE;
-    OXR(xrCreateActionSpace(session, &asci, &actionSpace));
+    const XrResult createResult = xrCreateActionSpace(session, &asci, &actionSpace);
+    if (XR_FAILED(createResult)) {
+        static bool sLoggedActionSpaceCreateError = false;
+        LogInputFallback("xrCreateActionSpace", createResult, sLoggedActionSpaceCreateError);
+        return XR_NULL_HANDLE;
+    }
     return actionSpace;
 }
 
@@ -107,8 +164,11 @@ InputStateStatic::InputStateStatic(const XrInstance& instance, const XrSession& 
                                          "squeeze_trigger", nullptr, 2, handSubactionPaths);
 
     XrPath interactionProfilePath = XR_NULL_PATH;
-    OXR(xrStringToPath(instance, "/interaction_profiles/oculus/touch_controller",
-                       &interactionProfilePath));
+    XrResult profilePathResult =
+        xrStringToPath(instance, "/interaction_profiles/oculus/touch_controller",
+                       &interactionProfilePath);
+    OXR_CheckErrors(profilePathResult, "xrStringToPath(/interaction_profiles/oculus/touch_controller)",
+                    false);
 
     // Create bindings for Quest controllers.
     {
@@ -158,8 +218,20 @@ InputStateStatic::InputStateStatic(const XrInstance& instance, const XrSession& 
         suggestedBindings.type                   = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING;
         suggestedBindings.interactionProfile     = interactionProfilePath;
         suggestedBindings.suggestedBindings      = &bindings[0];
-        suggestedBindings.countSuggestedBindings = bindings.size();
-        OXR(xrSuggestInteractionProfileBindings(instance, &suggestedBindings));
+        suggestedBindings.countSuggestedBindings = static_cast<uint32_t>(bindings.size());
+        if (XR_SUCCEEDED(profilePathResult)) {
+            const XrResult suggestResult =
+                xrSuggestInteractionProfileBindings(instance, &suggestedBindings);
+            OXR_CheckErrors(suggestResult, "xrSuggestInteractionProfileBindings(oculus_touch)",
+                            false);
+            if (XR_FAILED(suggestResult)) {
+                XR_PORT_LOGW(
+                    "Failed to bind Oculus interaction profile. Continuing with minimal input path.");
+            }
+        } else {
+            XR_PORT_LOGW(
+                "Oculus interaction profile path unavailable. Continuing with minimal input path.");
+        }
 
         // Attach to session
         XrSessionActionSetsAttachInfo attachInfo = {};
@@ -218,10 +290,16 @@ XrActionStateBoolean SyncButtonState(const XrSession& session,
     getInfo.action               = action;
     getInfo.subactionPath        = subactionPath;
 
-    XrActionStateBoolean state = {};
-    state.type                 = XR_TYPE_ACTION_STATE_BOOLEAN;
-
-    OXR(xrGetActionStateBoolean(session, &getInfo, &state));
+    XrActionStateBoolean state = EmptyBooleanState();
+    const XrResult       getResult = xrGetActionStateBoolean(session, &getInfo, &state);
+    if (XR_FAILED(getResult)) {
+        if (getResult == XR_ERROR_PATH_UNSUPPORTED) {
+            gDisableActionPolling = true;
+        }
+        static bool sLoggedGetActionStateBooleanError = false;
+        LogInputFallback("xrGetActionStateBoolean", getResult, sLoggedGetActionStateBooleanError);
+        state = EmptyBooleanState();
+    }
     return state;
 }
 
@@ -232,16 +310,51 @@ XrActionStateVector2f SyncVector2fState(const XrSession& session, const XrAction
     getInfo.action               = action;
     getInfo.subactionPath        = subactionPath;
 
-    XrActionStateVector2f state = {};
-    state.type                  = XR_TYPE_ACTION_STATE_VECTOR2F;
-
-    OXR(xrGetActionStateVector2f(session, &getInfo, &state));
+    XrActionStateVector2f state = EmptyVector2fState();
+    const XrResult getResult = xrGetActionStateVector2f(session, &getInfo, &state);
+    if (XR_FAILED(getResult)) {
+        if (getResult == XR_ERROR_PATH_UNSUPPORTED) {
+            gDisableActionPolling = true;
+        }
+        static bool sLoggedGetActionStateVector2fError = false;
+        LogInputFallback("xrGetActionStateVector2f", getResult, sLoggedGetActionStateVector2fError);
+        state = EmptyVector2fState();
+    }
     return state;
 }
 
 void InputStateFrame::SyncButtonsAndThumbSticks(
     const XrSession& session, const std::unique_ptr<InputStateStatic>& staticState) {
     assert(staticState != nullptr);
+    // Reset each frame to avoid stale button values when sync fails.
+    mAButtonState        = EmptyBooleanState();
+    mBButtonState        = EmptyBooleanState();
+    mXButtonState        = EmptyBooleanState();
+    mYButtonState        = EmptyBooleanState();
+    mLeftMenuButtonState = EmptyBooleanState();
+    mThumbStickState[LEFT_CONTROLLER]      = EmptyVector2fState();
+    mThumbStickState[RIGHT_CONTROLLER]     = EmptyVector2fState();
+    mThumbStickClickState[LEFT_CONTROLLER] = EmptyBooleanState();
+    mThumbStickClickState[RIGHT_CONTROLLER] = EmptyBooleanState();
+    mThumbrestTouchState[LEFT_CONTROLLER]   = EmptyBooleanState();
+    mThumbrestTouchState[RIGHT_CONTROLLER]  = EmptyBooleanState();
+    mIndexTriggerState[LEFT_CONTROLLER]     = EmptyBooleanState();
+    mIndexTriggerState[RIGHT_CONTROLLER]    = EmptyBooleanState();
+    mSqueezeTriggerState[LEFT_CONTROLLER]   = EmptyBooleanState();
+    mSqueezeTriggerState[RIGHT_CONTROLLER]  = EmptyBooleanState();
+    mIsHandActive[LEFT_CONTROLLER]          = false;
+    mIsHandActive[RIGHT_CONTROLLER]         = false;
+
+    if (gDisableActionPolling) {
+        static bool sLoggedInputPollingDisabled = false;
+        if (!sLoggedInputPollingDisabled) {
+            XR_PORT_LOGW(
+                "Disabling controller action polling after XR_ERROR_PATH_UNSUPPORTED on this runtime");
+            sLoggedInputPollingDisabled = true;
+        }
+        return;
+    }
+
     XrActiveActionSet activeActionSet = {};
     activeActionSet.actionSet         = staticState->mActionSet;
     activeActionSet.subactionPath     = XR_NULL_PATH;
@@ -251,7 +364,12 @@ void InputStateFrame::SyncButtonsAndThumbSticks(
     syncInfo.next                  = nullptr;
     syncInfo.countActiveActionSets = 1;
     syncInfo.activeActionSets      = &activeActionSet;
-    OXR(xrSyncActions(session, &syncInfo));
+    const XrResult syncResult = xrSyncActions(session, &syncInfo);
+    if (XR_FAILED(syncResult)) {
+        static bool sLoggedSyncActionsError = false;
+        LogInputFallback("xrSyncActions", syncResult, sLoggedSyncActionsError);
+        return;
+    }
 
     // Sync button states
     mAButtonState = SyncButtonState(session, staticState->mAButtonAction);
@@ -280,10 +398,11 @@ void InputStateFrame::SyncButtonsAndThumbSticks(
         session, staticState->mThumbRestTouchAction, staticState->mRightHandSubactionPath);
 
     // Sync index trigger states
-    mIndexTriggerState[LEFT_CONTROLLER] = SyncButtonState(
-        session, staticState->mLeftHandIndexTriggerAction, staticState->mLeftHandSubactionPath);
-    mIndexTriggerState[RIGHT_CONTROLLER] = SyncButtonState(
-        session, staticState->mRightHandIndexTriggerAction, staticState->mRightHandSubactionPath);
+    // These actions are created without subaction paths; query with XR_NULL_PATH.
+    mIndexTriggerState[LEFT_CONTROLLER] =
+        SyncButtonState(session, staticState->mLeftHandIndexTriggerAction);
+    mIndexTriggerState[RIGHT_CONTROLLER] =
+        SyncButtonState(session, staticState->mRightHandIndexTriggerAction);
 
     // Sync squeeze trigger states
     mSqueezeTriggerState[LEFT_CONTROLLER] = SyncButtonState(
@@ -291,13 +410,23 @@ void InputStateFrame::SyncButtonsAndThumbSticks(
     mSqueezeTriggerState[RIGHT_CONTROLLER] = SyncButtonState(
         session, staticState->mSqueezeTriggerAction, staticState->mRightHandSubactionPath);
 
-    if (staticState->mLeftHandSpace == XR_NULL_HANDLE) {
+    if (!staticState->mLeftHandSpaceUnavailable && staticState->mLeftHandSpace == XR_NULL_HANDLE) {
         staticState->mLeftHandSpace = CreateActionSpace(session, staticState->mHandPoseAction,
                                                         staticState->mLeftHandSubactionPath);
+        if (staticState->mLeftHandSpace == XR_NULL_HANDLE) {
+            staticState->mLeftHandSpaceUnavailable = true;
+            XR_PORT_LOGW("Left hand action space unavailable; hand tracking disabled for this runtime");
+        }
     }
-    if (staticState->mRightHandSpace == XR_NULL_HANDLE) {
+    if (!staticState->mRightHandSpaceUnavailable &&
+        staticState->mRightHandSpace == XR_NULL_HANDLE) {
         staticState->mRightHandSpace = CreateActionSpace(session, staticState->mHandPoseAction,
                                                          staticState->mRightHandSubactionPath);
+        if (staticState->mRightHandSpace == XR_NULL_HANDLE) {
+            staticState->mRightHandSpaceUnavailable = true;
+            XR_PORT_LOGW(
+                "Right hand action space unavailable; hand tracking disabled for this runtime");
+        }
     }
 
     // get the active state and pose for the two comtrollers
@@ -306,16 +435,36 @@ void InputStateFrame::SyncButtonsAndThumbSticks(
                                          .action        = staticState->mHandPoseAction,
                                          .subactionPath = staticState->mLeftHandSubactionPath};
         XrActionStatePose    handPose = {.type = XR_TYPE_ACTION_STATE_POSE};
-        OXR(xrGetActionStatePose(session, &getInfo, &handPose));
-        mIsHandActive[LEFT_CONTROLLER] = handPose.isActive;
+        const XrResult getPoseResult = xrGetActionStatePose(session, &getInfo, &handPose);
+        if (XR_SUCCEEDED(getPoseResult)) {
+            mIsHandActive[LEFT_CONTROLLER] = handPose.isActive;
+        } else {
+            if (getPoseResult == XR_ERROR_PATH_UNSUPPORTED) {
+                gDisableActionPolling = true;
+            }
+            static bool sLoggedGetActionStatePoseError = false;
+            LogInputFallback("xrGetActionStatePose(left)", getPoseResult,
+                             sLoggedGetActionStatePoseError);
+            mIsHandActive[LEFT_CONTROLLER] = false;
+        }
     }
     if (staticState->mRightHandSpace != XR_NULL_HANDLE) {
         XrActionStateGetInfo getInfo  = {.type          = XR_TYPE_ACTION_STATE_GET_INFO,
                                          .action        = staticState->mHandPoseAction,
                                          .subactionPath = staticState->mRightHandSubactionPath};
         XrActionStatePose    handPose = {.type = XR_TYPE_ACTION_STATE_POSE};
-        OXR(xrGetActionStatePose(session, &getInfo, &handPose));
-        mIsHandActive[RIGHT_CONTROLLER] = handPose.isActive;
+        const XrResult getPoseResult = xrGetActionStatePose(session, &getInfo, &handPose);
+        if (XR_SUCCEEDED(getPoseResult)) {
+            mIsHandActive[RIGHT_CONTROLLER] = handPose.isActive;
+        } else {
+            if (getPoseResult == XR_ERROR_PATH_UNSUPPORTED) {
+                gDisableActionPolling = true;
+            }
+            static bool sLoggedGetActionStatePoseError = false;
+            LogInputFallback("xrGetActionStatePose(right)", getPoseResult,
+                             sLoggedGetActionStatePoseError);
+            mIsHandActive[RIGHT_CONTROLLER] = false;
+        }
     }
 }
 
@@ -323,17 +472,41 @@ void InputStateFrame::SyncHandPoses(const XrSession&                         ses
                                     const std::unique_ptr<InputStateStatic>& staticState,
                                     const XrSpace&                           referenceSpace,
                                     const XrTime                             predictedDisplayTime) {
-    OXR(xrLocateSpace(staticState->mRightHandSpace, referenceSpace, predictedDisplayTime,
-                      &mHandPositions[InputStateFrame::RIGHT_CONTROLLER]));
-    mIsHandActive[RIGHT_CONTROLLER] =
-        (mHandPositions[InputStateFrame::RIGHT_CONTROLLER].locationFlags &
-         XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
+    if (staticState->mRightHandSpace != XR_NULL_HANDLE) {
+        const XrResult rightLocateResult =
+            xrLocateSpace(staticState->mRightHandSpace, referenceSpace, predictedDisplayTime,
+                          &mHandPositions[InputStateFrame::RIGHT_CONTROLLER]);
+        if (XR_SUCCEEDED(rightLocateResult)) {
+            mIsHandActive[RIGHT_CONTROLLER] =
+                (mHandPositions[InputStateFrame::RIGHT_CONTROLLER].locationFlags &
+                 XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
+        } else {
+            static bool sLoggedLocateSpaceError = false;
+            LogInputFallback("xrLocateSpace(right)", rightLocateResult, sLoggedLocateSpaceError);
+            mHandPositions[InputStateFrame::RIGHT_CONTROLLER].locationFlags = 0;
+            mIsHandActive[RIGHT_CONTROLLER]                                 = false;
+        }
+    } else {
+        mIsHandActive[RIGHT_CONTROLLER] = false;
+    }
 
-    OXR(xrLocateSpace(staticState->mLeftHandSpace, referenceSpace, predictedDisplayTime,
-                      &mHandPositions[InputStateFrame::LEFT_CONTROLLER]));
-    mIsHandActive[LEFT_CONTROLLER] =
-        (mHandPositions[InputStateFrame::LEFT_CONTROLLER].locationFlags &
-         XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
+    if (staticState->mLeftHandSpace != XR_NULL_HANDLE) {
+        const XrResult leftLocateResult =
+            xrLocateSpace(staticState->mLeftHandSpace, referenceSpace, predictedDisplayTime,
+                          &mHandPositions[InputStateFrame::LEFT_CONTROLLER]);
+        if (XR_SUCCEEDED(leftLocateResult)) {
+            mIsHandActive[LEFT_CONTROLLER] =
+                (mHandPositions[InputStateFrame::LEFT_CONTROLLER].locationFlags &
+                 XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
+        } else {
+            static bool sLoggedLocateSpaceError = false;
+            LogInputFallback("xrLocateSpace(left)", leftLocateResult, sLoggedLocateSpaceError);
+            mHandPositions[InputStateFrame::LEFT_CONTROLLER].locationFlags = 0;
+            mIsHandActive[LEFT_CONTROLLER]                                 = false;
+        }
+    } else {
+        mIsHandActive[LEFT_CONTROLLER] = false;
+    }
 
     // Determine preferred hand.
     {

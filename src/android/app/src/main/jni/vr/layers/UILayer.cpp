@@ -29,6 +29,17 @@ License     :   Licensed under GPLv3 or any later version.
 
 namespace {
 
+const char* XrResultToStringForLog(const XrResult result) {
+    static thread_local char buffer[XR_MAX_RESULT_STRING_SIZE];
+    memset(buffer, 0, sizeof(buffer));
+    if (OpenXr::GetInstance() != XR_NULL_HANDLE &&
+        xrResultToString(OpenXr::GetInstance(), result, buffer) == XR_SUCCESS &&
+        buffer[0] != '\0') {
+        return buffer;
+    }
+    return "XR_UNKNOWN_RESULT";
+}
+
 /** Used to translate texture coordinates into the corresponding coordinates
  * on the virtual Window.
  */
@@ -298,13 +309,21 @@ int UILayer::CreateSwapchain() {
         XrResult xrResult =
             xrGetInstanceProcAddr(OpenXr::GetInstance(), "xrCreateSwapchainAndroidSurfaceKHR",
                                   (PFN_xrVoidFunction*)(&pfnCreateSwapchainAndroidSurfaceKHR));
+        XR_DIAG_LOGI(
+            "xrGetInstanceProcAddr(xrCreateSwapchainAndroidSurfaceKHR) => %d (%s) width=%u height=%u",
+            xrResult, XrResultToStringForLog(xrResult), swapchainCreateInfo.width,
+            swapchainCreateInfo.height);
         if (xrResult != XR_SUCCESS || pfnCreateSwapchainAndroidSurfaceKHR == nullptr) {
             FAIL("xrGetInstanceProcAddr failed for "
                  "xrCreateSwapchainAndroidSurfaceKHR");
         }
 
-        OXR(pfnCreateSwapchainAndroidSurfaceKHR(mSession, &swapchainCreateInfo, &mSwapchain.mHandle,
-                                                &mSurface));
+        xrResult = pfnCreateSwapchainAndroidSurfaceKHR(mSession, &swapchainCreateInfo,
+                                                       &mSwapchain.mHandle, &mSurface);
+        XR_DIAG_LOGI("xrCreateSwapchainAndroidSurfaceKHR => %d (%s) width=%u height=%u",
+                     xrResult, XrResultToStringForLog(xrResult), swapchainCreateInfo.width,
+                     swapchainCreateInfo.height);
+        OXR(xrResult);
 
         ALOGD("UILayer: created swapchain {}x{}", mSwapchain.mWidth, mSwapchain.mHeight);
 

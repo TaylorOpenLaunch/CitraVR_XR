@@ -17,9 +17,13 @@ License     :   Licensed under GPLv3 or any later version.
 
 #include <openxr/openxr_platform.h>
 
+#include <array>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <assert.h>
+#include <stdarg.h>
 
 #define BAIL_ON_ERR(fn, returnCode)                                                                \
     do {                                                                                           \
@@ -30,8 +34,130 @@ License     :   Licensed under GPLv3 or any later version.
         }                                                                                          \
     } while (0)
 
+namespace {
+std::unordered_set<std::string> gEnabledExtensions;
+
+const char* XrResultToSymbol(const XrResult result) {
+    switch (result) {
+        case XR_SUCCESS:
+            return "XR_SUCCESS";
+        case XR_TIMEOUT_EXPIRED:
+            return "XR_TIMEOUT_EXPIRED";
+        case XR_SESSION_LOSS_PENDING:
+            return "XR_SESSION_LOSS_PENDING";
+        case XR_EVENT_UNAVAILABLE:
+            return "XR_EVENT_UNAVAILABLE";
+        case XR_SPACE_BOUNDS_UNAVAILABLE:
+            return "XR_SPACE_BOUNDS_UNAVAILABLE";
+        case XR_SESSION_NOT_FOCUSED:
+            return "XR_SESSION_NOT_FOCUSED";
+        case XR_FRAME_DISCARDED:
+            return "XR_FRAME_DISCARDED";
+        case XR_ERROR_VALIDATION_FAILURE:
+            return "XR_ERROR_VALIDATION_FAILURE";
+        case XR_ERROR_RUNTIME_FAILURE:
+            return "XR_ERROR_RUNTIME_FAILURE";
+        case XR_ERROR_OUT_OF_MEMORY:
+            return "XR_ERROR_OUT_OF_MEMORY";
+        case XR_ERROR_API_VERSION_UNSUPPORTED:
+            return "XR_ERROR_API_VERSION_UNSUPPORTED";
+        case XR_ERROR_INITIALIZATION_FAILED:
+            return "XR_ERROR_INITIALIZATION_FAILED";
+        case XR_ERROR_FUNCTION_UNSUPPORTED:
+            return "XR_ERROR_FUNCTION_UNSUPPORTED";
+        case XR_ERROR_FEATURE_UNSUPPORTED:
+            return "XR_ERROR_FEATURE_UNSUPPORTED";
+        case XR_ERROR_EXTENSION_NOT_PRESENT:
+            return "XR_ERROR_EXTENSION_NOT_PRESENT";
+        case XR_ERROR_LIMIT_REACHED:
+            return "XR_ERROR_LIMIT_REACHED";
+        case XR_ERROR_SIZE_INSUFFICIENT:
+            return "XR_ERROR_SIZE_INSUFFICIENT";
+        case XR_ERROR_HANDLE_INVALID:
+            return "XR_ERROR_HANDLE_INVALID";
+        case XR_ERROR_INSTANCE_LOST:
+            return "XR_ERROR_INSTANCE_LOST";
+        case XR_ERROR_SESSION_RUNNING:
+            return "XR_ERROR_SESSION_RUNNING";
+        case XR_ERROR_SESSION_NOT_RUNNING:
+            return "XR_ERROR_SESSION_NOT_RUNNING";
+        case XR_ERROR_SESSION_LOST:
+            return "XR_ERROR_SESSION_LOST";
+        case XR_ERROR_SYSTEM_INVALID:
+            return "XR_ERROR_SYSTEM_INVALID";
+        case XR_ERROR_PATH_INVALID:
+            return "XR_ERROR_PATH_INVALID";
+        case XR_ERROR_PATH_COUNT_EXCEEDED:
+            return "XR_ERROR_PATH_COUNT_EXCEEDED";
+        case XR_ERROR_PATH_FORMAT_INVALID:
+            return "XR_ERROR_PATH_FORMAT_INVALID";
+        case XR_ERROR_PATH_UNSUPPORTED:
+            return "XR_ERROR_PATH_UNSUPPORTED";
+        case XR_ERROR_LAYER_INVALID:
+            return "XR_ERROR_LAYER_INVALID";
+        case XR_ERROR_LAYER_LIMIT_EXCEEDED:
+            return "XR_ERROR_LAYER_LIMIT_EXCEEDED";
+        case XR_ERROR_SWAPCHAIN_RECT_INVALID:
+            return "XR_ERROR_SWAPCHAIN_RECT_INVALID";
+        case XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED:
+            return "XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED";
+        case XR_ERROR_ACTION_TYPE_MISMATCH:
+            return "XR_ERROR_ACTION_TYPE_MISMATCH";
+        case XR_ERROR_SESSION_NOT_READY:
+            return "XR_ERROR_SESSION_NOT_READY";
+        case XR_ERROR_SESSION_NOT_STOPPING:
+            return "XR_ERROR_SESSION_NOT_STOPPING";
+        case XR_ERROR_TIME_INVALID:
+            return "XR_ERROR_TIME_INVALID";
+        case XR_ERROR_REFERENCE_SPACE_UNSUPPORTED:
+            return "XR_ERROR_REFERENCE_SPACE_UNSUPPORTED";
+        case XR_ERROR_FORM_FACTOR_UNSUPPORTED:
+            return "XR_ERROR_FORM_FACTOR_UNSUPPORTED";
+        default:
+            return "XR_UNKNOWN_RESULT";
+    }
+}
+
+const char* XrResultToStringSafe(const XrResult result, const XrInstance instance) {
+    static thread_local char buffer[XR_MAX_RESULT_STRING_SIZE];
+    memset(buffer, 0, sizeof(buffer));
+    if (instance != XR_NULL_HANDLE &&
+        xrResultToString(instance, result, buffer) == XR_SUCCESS &&
+        buffer[0] != '\0') {
+        return buffer;
+    }
+    return XrResultToSymbol(result);
+}
+
+void LogXrCall(const char* function, const XrResult result, const XrInstance instanceForString,
+               const char* detailFmt = nullptr, ...) {
+    char details[512] = {};
+    if (detailFmt != nullptr) {
+        va_list args;
+        va_start(args, detailFmt);
+        vsnprintf(details, sizeof(details), detailFmt, args);
+        va_end(args);
+    }
+
+    const char* symbol = XrResultToStringSafe(result, instanceForString);
+    if (details[0] != '\0') {
+        XR_DIAG_LOGI("%s => %d (%s) %s", function, result, symbol, details);
+    } else {
+        XR_DIAG_LOGI("%s => %d (%s)", function, result, symbol);
+    }
+}
+
+} // anonymous namespace
+
 XrInstance instance = XR_NULL_HANDLE;
-void       OXR_CheckErrors(XrResult result, const char* function, bool failOnError) {
+bool       OpenXrIsExtensionEnabled(const char* extensionName) {
+    if (extensionName == nullptr) {
+        return false;
+    }
+    return gEnabledExtensions.find(extensionName) != gEnabledExtensions.end();
+}
+
+void OXR_CheckErrors(XrResult result, const char* function, bool failOnError) {
           if (XR_FAILED(result)) {
               if (instance == XR_NULL_HANDLE) {
                   if (failOnError) {
@@ -90,86 +216,122 @@ namespace {
     }
 }
 
-// Next return code: -3
-int XrCheckRequiredExtensions(const char* const* requiredExtensionNames,
-                              const size_t       numRequiredExtensions) {
-
+std::vector<XrExtensionProperties> XrEnumerateInstanceExtensions() {
 #ifndef NDEBUG
     XrEnumerateLayerProperties();
 #endif
 
-    // Check the list of required extensions against what is supported by the
-    // runtime.
-    {
-        XrResult                                   result;
-        PFN_xrEnumerateInstanceExtensionProperties xrEnumerateInstanceExtensionProperties;
-        OXR(result = xrGetInstanceProcAddr(
-                XR_NULL_HANDLE, "xrEnumerateInstanceExtensionProperties",
-                (PFN_xrVoidFunction*)&xrEnumerateInstanceExtensionProperties));
-        if (result != XR_SUCCESS) {
-            ALOGE("Failed to get xrEnumerateInstanceExtensionProperties "
-                  "function pointer.");
-            return -1;
-        }
-
-        uint32_t numInputExtensions  = 0;
-        uint32_t numOutputExtensions = 0;
-        OXR(xrEnumerateInstanceExtensionProperties(NULL, numInputExtensions, &numOutputExtensions,
-                                                   NULL));
-        ALOGV("xrEnumerateInstanceExtensionProperties found {} extension(s).", numOutputExtensions);
-
-        numInputExtensions = numOutputExtensions;
-
-        auto extensionProperties = std::vector<XrExtensionProperties>(numOutputExtensions);
-
-        for (auto& ext : extensionProperties) {
-            ext.type = XR_TYPE_EXTENSION_PROPERTIES;
-            ext.next = NULL;
-        }
-
-        OXR(xrEnumerateInstanceExtensionProperties(NULL, numInputExtensions, &numOutputExtensions,
-                                                   extensionProperties.data()));
-#ifndef NDEBUG
-        for (uint32_t i = 0; i < numOutputExtensions; i++) {
-            ALOGV("Extension #{} = '{}'.", i, extensionProperties[i].extensionName);
-        }
-#endif
-
-        for (uint32_t i = 0; i < numRequiredExtensions; i++) {
-            bool found = false;
-            for (uint32_t j = 0; j < numOutputExtensions; j++) {
-                if (!strcmp(requiredExtensionNames[i], extensionProperties[j].extensionName)) {
-                    ALOGD("Found required extension {}", requiredExtensionNames[i]);
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                ALOGE("Failed to find required extension {}", requiredExtensionNames[i]);
-                return -2;
-            }
-        }
+    uint32_t extensionCount = 0;
+    XrResult result =
+        xrEnumerateInstanceExtensionProperties(nullptr, 0, &extensionCount, nullptr);
+    LogXrCall("xrEnumerateInstanceExtensionProperties(count)", result, XR_NULL_HANDLE);
+    if (XR_FAILED(result)) {
+        return {};
     }
-    return 0;
+
+    std::vector<XrExtensionProperties> extensionProperties(extensionCount);
+    for (auto& ext : extensionProperties) {
+        ext.type = XR_TYPE_EXTENSION_PROPERTIES;
+        ext.next = nullptr;
+    }
+
+    result = xrEnumerateInstanceExtensionProperties(nullptr, extensionCount, &extensionCount,
+                                                    extensionProperties.data());
+    LogXrCall("xrEnumerateInstanceExtensionProperties(list)", result, XR_NULL_HANDLE,
+              "count=%u", extensionCount);
+    if (XR_FAILED(result)) {
+        return {};
+    }
+
+    XR_DIAG_LOGI("Detected %u OpenXR instance extension(s):", extensionCount);
+    for (uint32_t i = 0; i < extensionCount; ++i) {
+        XR_DIAG_LOGI("  [%u] %s (specVersion=%u)", i, extensionProperties[i].extensionName,
+                     extensionProperties[i].extensionVersion);
+    }
+    return extensionProperties;
 }
 
-XrInstance XrInstanceCreate() {
-    // Check that the extensions required are present.
-    static const char* const requiredExtensionNames[] = {
-        XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
-        XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME,
-        XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME,
-        XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME,
-        XR_KHR_ANDROID_SURFACE_SWAPCHAIN_EXTENSION_NAME,
-        XR_FB_COMPOSITION_LAYER_SETTINGS_EXTENSION_NAME,
-        XR_FB_PASSTHROUGH_EXTENSION_NAME,
-        XR_META_PERFORMANCE_METRICS_EXTENSION_NAME,
-    };
-    static constexpr size_t numRequiredExtensions =
-        sizeof(requiredExtensionNames) / sizeof(requiredExtensionNames[0]);
+void EnableExtensionIfAvailable(const char* extensionName,
+                                const std::unordered_set<std::string>& availableExtensions,
+                                std::vector<std::string>& enabledExtensions) {
+    if (availableExtensions.find(extensionName) != availableExtensions.end()) {
+        enabledExtensions.emplace_back(extensionName);
+        XR_PORT_LOGI("Enabling extension: %s", extensionName);
+    } else {
+        XR_PORT_LOGI("Extension unavailable, skipping: %s", extensionName);
+    }
+}
 
-    BAIL_ON_ERR(XrCheckRequiredExtensions(&requiredExtensionNames[0], numRequiredExtensions),
-                XR_NULL_HANDLE);
+XrInstance XrInstanceCreate(JavaVM* jvm, jobject activityObject) {
+    const auto extensionProperties = XrEnumerateInstanceExtensions();
+    if (extensionProperties.empty()) {
+        XR_PORT_LOGE("No instance extensions were enumerated.");
+        return XR_NULL_HANDLE;
+    }
+
+    std::unordered_set<std::string> availableExtensions;
+    for (const auto& ext : extensionProperties) {
+        availableExtensions.emplace(ext.extensionName);
+    }
+
+    static constexpr std::array<const char*, 2> kRequiredExtensions = {
+        XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
+        XR_KHR_ANDROID_SURFACE_SWAPCHAIN_EXTENSION_NAME,
+    };
+
+    for (const char* requiredExtension : kRequiredExtensions) {
+        if (availableExtensions.find(requiredExtension) == availableExtensions.end()) {
+            XR_PORT_LOGE("Required extension missing: %s", requiredExtension);
+            return XR_NULL_HANDLE;
+        }
+    }
+
+    std::vector<std::string> enabledExtensions;
+    enabledExtensions.reserve(16);
+
+    for (const char* requiredExtension : kRequiredExtensions) {
+        enabledExtensions.emplace_back(requiredExtension);
+        XR_PORT_LOGI("Required extension present: %s", requiredExtension);
+    }
+
+#ifdef XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME
+    EnableExtensionIfAvailable(XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME, availableExtensions,
+                               enabledExtensions);
+#endif
+#ifdef XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME
+    EnableExtensionIfAvailable(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME, availableExtensions,
+                               enabledExtensions);
+#endif
+#ifdef XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME
+    EnableExtensionIfAvailable(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME, availableExtensions,
+                               enabledExtensions);
+#endif
+#ifdef XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME
+    EnableExtensionIfAvailable(XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME, availableExtensions,
+                               enabledExtensions);
+#endif
+#ifdef XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME
+    EnableExtensionIfAvailable(XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME, availableExtensions,
+                               enabledExtensions);
+#endif
+#ifdef XR_FB_COMPOSITION_LAYER_SETTINGS_EXTENSION_NAME
+    EnableExtensionIfAvailable(XR_FB_COMPOSITION_LAYER_SETTINGS_EXTENSION_NAME, availableExtensions,
+                               enabledExtensions);
+#endif
+#ifdef XR_FB_PASSTHROUGH_EXTENSION_NAME
+    EnableExtensionIfAvailable(XR_FB_PASSTHROUGH_EXTENSION_NAME, availableExtensions,
+                               enabledExtensions);
+#endif
+#ifdef XR_META_PERFORMANCE_METRICS_EXTENSION_NAME
+    EnableExtensionIfAvailable(XR_META_PERFORMANCE_METRICS_EXTENSION_NAME, availableExtensions,
+                               enabledExtensions);
+#endif
+
+    std::vector<const char*> enabledExtensionNames;
+    enabledExtensionNames.reserve(enabledExtensions.size());
+    for (const auto& extension : enabledExtensions) {
+        enabledExtensionNames.push_back(extension.c_str());
+    }
 
     XrApplicationInfo appInfo = {};
     strcpy(appInfo.applicationName, "Citra");
@@ -184,48 +346,89 @@ XrInstance XrInstanceCreate() {
     ici.createFlags           = 0;
     ici.applicationInfo       = appInfo;
     ici.enabledApiLayerCount  = 0;
-    ici.enabledApiLayerNames  = NULL;
-    ici.enabledExtensionCount = numRequiredExtensions;
-    ici.enabledExtensionNames = requiredExtensionNames;
+    ici.enabledApiLayerNames  = nullptr;
+    ici.enabledExtensionCount = static_cast<uint32_t>(enabledExtensionNames.size());
+    ici.enabledExtensionNames = enabledExtensionNames.data();
 
-    XrResult   initResult;
-    XrInstance instanceLocal;
-    OXR(initResult = xrCreateInstance(&ici, &instanceLocal));
-    if (initResult != XR_SUCCESS) {
-        ALOGE("ERROR({}()): Failed to create XR mInstance: {}.", __FUNCTION__, initResult);
+#ifdef XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME
+    const bool hasAndroidCreateInstance =
+        availableExtensions.find(XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME) !=
+        availableExtensions.end();
+    XrInstanceCreateInfoAndroidKHR androidCreateInfo = {
+        XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
+    androidCreateInfo.applicationVM       = jvm;
+    androidCreateInfo.applicationActivity = activityObject;
+    if (hasAndroidCreateInstance) {
+        ici.next = &androidCreateInfo;
+        XR_PORT_LOGI("Using XR_KHR_android_create_instance chain during xrCreateInstance");
+    } else {
+        XR_PORT_LOGW(
+            "XR_KHR_android_create_instance not available; creating instance without Android chain");
+    }
+#endif
+
+    XrResult   initResult    = XR_SUCCESS;
+    XrInstance instanceLocal = XR_NULL_HANDLE;
+    initResult               = xrCreateInstance(&ici, &instanceLocal);
+    LogXrCall("xrCreateInstance", initResult, XR_NULL_HANDLE, "enabledExtensionCount=%u",
+              ici.enabledExtensionCount);
+    if (XR_FAILED(initResult)) {
+        XR_PORT_LOGE("Failed to create OpenXR instance.");
         return XR_NULL_HANDLE;
     }
-    // Log runtime instance info
-    {
-        XrInstanceProperties instanceInfo;
-        instanceInfo.type = XR_TYPE_INSTANCE_PROPERTIES;
-        instanceInfo.next = NULL;
-        OXR(xrGetInstanceProperties(instanceLocal, &instanceInfo));
-        ALOGV("Runtime {}: Version : {}.{}.{}", instanceInfo.runtimeName,
-              XR_VERSION_MAJOR(instanceInfo.runtimeVersion),
-              XR_VERSION_MINOR(instanceInfo.runtimeVersion),
-              XR_VERSION_PATCH(instanceInfo.runtimeVersion));
+
+    gEnabledExtensions.clear();
+    for (const auto& extension : enabledExtensions) {
+        gEnabledExtensions.insert(extension);
     }
+    XR_DIAG_LOGI("Enabled %zu extension(s) for this instance.", gEnabledExtensions.size());
+    for (const auto& extension : gEnabledExtensions) {
+        XR_DIAG_LOGI("  enabled: %s", extension.c_str());
+    }
+
+    XrInstanceProperties instanceInfo = {};
+    instanceInfo.type                 = XR_TYPE_INSTANCE_PROPERTIES;
+    instanceInfo.next                 = nullptr;
+    initResult                        = xrGetInstanceProperties(instanceLocal, &instanceInfo);
+    LogXrCall("xrGetInstanceProperties", initResult, instanceLocal);
+    if (XR_SUCCEEDED(initResult)) {
+        XR_DIAG_LOGI("Runtime=%s version=%u.%u.%u", instanceInfo.runtimeName,
+                     XR_VERSION_MAJOR(instanceInfo.runtimeVersion),
+                     XR_VERSION_MINOR(instanceInfo.runtimeVersion),
+                     XR_VERSION_PATCH(instanceInfo.runtimeVersion));
+    }
+
     return instanceLocal;
 }
 
 // Next return code: -2
 int32_t XrInitializeLoaderTrampoline(JavaVM* jvm, jobject activityObject) {
-    PFN_xrInitializeLoaderKHR xrInitializeLoaderKHR;
-    xrGetInstanceProcAddr(XR_NULL_HANDLE, "xrInitializeLoaderKHR",
-                          (PFN_xrVoidFunction*)&xrInitializeLoaderKHR);
-    if (xrInitializeLoaderKHR != nullptr) {
-        XrLoaderInitInfoAndroidKHR loaderInitializeInfoAndroid;
-        memset(&loaderInitializeInfoAndroid, 0, sizeof(loaderInitializeInfoAndroid));
-        loaderInitializeInfoAndroid.type               = XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR;
-        loaderInitializeInfoAndroid.next               = NULL;
-        loaderInitializeInfoAndroid.applicationVM      = jvm;
-        loaderInitializeInfoAndroid.applicationContext = activityObject;
-        xrInitializeLoaderKHR((XrLoaderInitInfoBaseHeaderKHR*)&loaderInitializeInfoAndroid);
-    } else {
-        ALOGE("{}(): xrInitializeLoaderKHR is NULL", __FUNCTION__);
+    XR_PORT_LOGI("Initializing OpenXR loader trampoline");
+
+    PFN_xrInitializeLoaderKHR xrInitializeLoaderKHR = nullptr;
+    XrResult                  result                = xrGetInstanceProcAddr(
+        XR_NULL_HANDLE, "xrInitializeLoaderKHR", (PFN_xrVoidFunction*)&xrInitializeLoaderKHR);
+    LogXrCall("xrGetInstanceProcAddr(xrInitializeLoaderKHR)", result, XR_NULL_HANDLE);
+    if (XR_FAILED(result) || xrInitializeLoaderKHR == nullptr) {
+        XR_PORT_LOGE("%s: xrInitializeLoaderKHR is unavailable", __FUNCTION__);
         return -1;
     }
+
+    XrLoaderInitInfoAndroidKHR loaderInitializeInfoAndroid = {};
+    loaderInitializeInfoAndroid.type               = XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR;
+    loaderInitializeInfoAndroid.next               = nullptr;
+    loaderInitializeInfoAndroid.applicationVM      = jvm;
+    loaderInitializeInfoAndroid.applicationContext = activityObject;
+
+    result = xrInitializeLoaderKHR(
+        reinterpret_cast<XrLoaderInitInfoBaseHeaderKHR*>(&loaderInitializeInfoAndroid));
+    LogXrCall("xrInitializeLoaderKHR", result, XR_NULL_HANDLE);
+    if (XR_FAILED(result)) {
+        XR_PORT_LOGE("xrInitializeLoaderKHR failed");
+        return -2;
+    }
+
+    XR_PORT_LOGI("OpenXR loader initialization complete");
     return 0;
 }
 
@@ -245,11 +448,12 @@ XrSession XrSessionCreate(const XrInstance&                  localInstance,
     sessionCreateInfo.createFlags         = 0;
     sessionCreateInfo.systemId            = systemId;
 
-    XrSession session;
-    XrResult  initResult;
-    OXR(initResult = xrCreateSession(localInstance, &sessionCreateInfo, &session));
-    if (initResult != XR_SUCCESS) {
-        ALOGE("Failed to create XR session: {}.", initResult);
+    XrSession session = XR_NULL_HANDLE;
+    XrResult  result  = xrCreateSession(localInstance, &sessionCreateInfo, &session);
+    LogXrCall("xrCreateSession", result, localInstance, "systemId=%llu",
+              static_cast<unsigned long long>(systemId));
+    if (XR_FAILED(result)) {
+        XR_PORT_LOGE("Failed to create XR session.");
         return XR_NULL_HANDLE;
     }
     return session;
@@ -263,19 +467,47 @@ XrSystemId XrGetSystemId(const XrInstance& instanceLocal) {
     sgi.next            = NULL;
     sgi.formFactor      = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
 
-    XrResult initResult;
-    OXR(initResult = xrGetSystem(instanceLocal, &sgi, &systemId));
-    if (initResult != XR_SUCCESS) {
-        ALOGE("ERROR ({}()): Failed to get system.", __FUNCTION__);
+    const XrResult result = xrGetSystem(instanceLocal, &sgi, &systemId);
+    LogXrCall("xrGetSystem", result, instanceLocal, "formFactor=%d systemId=%llu",
+              sgi.formFactor, static_cast<unsigned long long>(systemId));
+    if (XR_FAILED(result)) {
+        XR_PORT_LOGE("%s: Failed to get XR system.", __FUNCTION__);
         return XR_NULL_SYSTEM_ID;
     }
     return systemId;
 }
 
+void LogSwapchainFormats(const XrInstance& instanceLocal, const XrSession& session) {
+    uint32_t formatCount = 0;
+    XrResult result      = xrEnumerateSwapchainFormats(session, 0, &formatCount, nullptr);
+    LogXrCall("xrEnumerateSwapchainFormats(count)", result, instanceLocal, "count=%u", formatCount);
+    if (XR_FAILED(result) || formatCount == 0) {
+        return;
+    }
+
+    std::vector<int64_t> formats(formatCount);
+    result = xrEnumerateSwapchainFormats(session, formatCount, &formatCount, formats.data());
+    LogXrCall("xrEnumerateSwapchainFormats(list)", result, instanceLocal, "count=%u", formatCount);
+    if (XR_FAILED(result)) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < formatCount; ++i) {
+        const long long formatValue = static_cast<long long>(formats[i]);
+        XR_DIAG_LOGI("swapchainFormat[%u]=0x%llx (%lld)", i,
+                     static_cast<unsigned long long>(formatValue), formatValue);
+    }
+}
+
 size_t GetMaxLayerCount(const XrInstance& instanceLocal, const XrSystemId& systemId) {
     XrSystemProperties systemProperties = {};
     systemProperties.type               = XR_TYPE_SYSTEM_PROPERTIES;
-    OXR(xrGetSystemProperties(instanceLocal, systemId, &systemProperties));
+    const XrResult result = xrGetSystemProperties(instanceLocal, systemId, &systemProperties);
+    LogXrCall("xrGetSystemProperties", result, instanceLocal, "systemId=%llu",
+              static_cast<unsigned long long>(systemId));
+    if (XR_FAILED(result)) {
+        return 0;
+    }
 
     ALOGV("System Properties: Name={} VendorId={}", systemProperties.systemName,
           systemProperties.vendorId);
@@ -287,6 +519,15 @@ size_t GetMaxLayerCount(const XrInstance& instanceLocal, const XrSystemId& syste
           "PositionTracking={}",
           systemProperties.trackingProperties.orientationTracking ? "True" : "False",
           systemProperties.trackingProperties.positionTracking ? "True" : "False");
+
+    XR_DIAG_LOGI(
+        "SystemProperties: name=%s vendorId=%u maxSwapchain=%ux%u maxLayers=%u tracking(orientation=%s position=%s)",
+        systemProperties.systemName, systemProperties.vendorId,
+        systemProperties.graphicsProperties.maxSwapchainImageWidth,
+        systemProperties.graphicsProperties.maxSwapchainImageHeight,
+        systemProperties.graphicsProperties.maxLayerCount,
+        systemProperties.trackingProperties.orientationTracking ? "true" : "false",
+        systemProperties.trackingProperties.positionTracking ? "true" : "false");
 
     return systemProperties.graphicsProperties.maxLayerCount;
 }
@@ -316,7 +557,7 @@ int32_t OpenXr::XrViewConfigInit() {
 
     ALOGV("Available Viewport Configuration Types: {}", viewportConfigTypeCount);
 
-    bool foundSupportedViewport;
+    bool foundSupportedViewport = false;
     for (uint32_t i = 0; i < viewportConfigTypeCount; i++) {
         const XrViewConfigurationType viewportConfigType = viewportConfigurationTypes[i];
 
@@ -446,6 +687,8 @@ void OpenXr::XrSpaceDestroy() {
 // Next return code: -7
 int OpenXr::OpenXRInit(JavaVM* const jvm, const jobject activityObject) {
 
+    XR_PORT_LOGI("Starting OpenXRInit");
+
     /////////////////////////////////////
     // Initialize OpenXR loader
     /////////////////////////////////////
@@ -454,9 +697,9 @@ int OpenXr::OpenXRInit(JavaVM* const jvm, const jobject activityObject) {
     /////////////////////////////////////
     // Create the OpenXR instance.
     /////////////////////////////////////
-    mInstance = XrInstanceCreate();
+    mInstance = XrInstanceCreate(jvm, activityObject);
     if (mInstance == XR_NULL_HANDLE) {
-        ALOGE("Failed to create XR instance");
+        XR_PORT_LOGE("Failed to create XR instance");
         return -2;
     }
     // Set the global used in macros
@@ -464,7 +707,7 @@ int OpenXr::OpenXRInit(JavaVM* const jvm, const jobject activityObject) {
 
     mSystemId = XrGetSystemId(mInstance);
     if (mSystemId == XR_NULL_SYSTEM_ID) {
-        ALOGE("Failed to retrieve XR system ID");
+        XR_PORT_LOGE("Failed to retrieve XR system ID");
         return -3;
     }
 
@@ -476,12 +719,24 @@ int OpenXr::OpenXRInit(JavaVM* const jvm, const jobject activityObject) {
     {
         // Get the graphics requirements.
         PFN_xrGetOpenGLESGraphicsRequirementsKHR pfnGetOpenGLESGraphicsRequirementsKHR = NULL;
-        OXR(xrGetInstanceProcAddr(mInstance, "xrGetOpenGLESGraphicsRequirementsKHR",
-                                  (PFN_xrVoidFunction*)(&pfnGetOpenGLESGraphicsRequirementsKHR)));
+        XrResult result = xrGetInstanceProcAddr(
+            mInstance, "xrGetOpenGLESGraphicsRequirementsKHR",
+            (PFN_xrVoidFunction*)(&pfnGetOpenGLESGraphicsRequirementsKHR));
+        LogXrCall("xrGetInstanceProcAddr(xrGetOpenGLESGraphicsRequirementsKHR)", result, mInstance);
+        if (XR_FAILED(result) || pfnGetOpenGLESGraphicsRequirementsKHR == nullptr) {
+            XR_PORT_LOGE("xrGetOpenGLESGraphicsRequirementsKHR is unavailable");
+            return -4;
+        }
 
         XrGraphicsRequirementsOpenGLESKHR graphicsRequirements = {};
         graphicsRequirements.type = XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR;
-        OXR(pfnGetOpenGLESGraphicsRequirementsKHR(mInstance, mSystemId, &graphicsRequirements));
+        result = pfnGetOpenGLESGraphicsRequirementsKHR(mInstance, mSystemId, &graphicsRequirements);
+        LogXrCall("xrGetOpenGLESGraphicsRequirementsKHR", result, mInstance, "systemId=%llu",
+                  static_cast<unsigned long long>(mSystemId));
+        if (XR_FAILED(result)) {
+            XR_PORT_LOGE("Failed to read OpenGLES graphics requirements");
+            return -4;
+        }
 
         {
             // Create the EGL Context
@@ -495,7 +750,7 @@ int OpenXr::OpenXRInit(JavaVM* const jvm, const jobject activityObject) {
             const XrVersion eglVersion = XR_MAKE_VERSION(eglMajor, eglMinor, 0);
             if (eglVersion < graphicsRequirements.minApiVersionSupported ||
                 eglVersion > graphicsRequirements.maxApiVersionSupported) {
-                ALOGE("GLES version {}.{} not supported", eglMajor, eglMinor);
+                XR_PORT_LOGE("GLES version %d.%d not supported by runtime", eglMajor, eglMinor);
                 return -5;
             }
         }
@@ -506,9 +761,12 @@ int OpenXr::OpenXRInit(JavaVM* const jvm, const jobject activityObject) {
     //////////////////////////////
     mSession = XrSessionCreate(instance, mSystemId, mEglContext);
     if (mSession == XR_NULL_HANDLE) {
-        ALOGE("Failed to create XR session");
+        XR_PORT_LOGE("Failed to create XR session");
         return -6;
     }
+    LogSwapchainFormats(mInstance, mSession);
+    XR_PORT_LOGI("OpenXRInit completed: systemId=%llu maxLayerCount=%zu",
+                 static_cast<unsigned long long>(mSystemId), mMaxLayerCount);
     return 0;
 }
 
@@ -524,4 +782,6 @@ void OpenXr::Shutdown() {
         OXR(xrDestroyInstance(mInstance));
         mInstance = XR_NULL_HANDLE;
     }
+
+    gEnabledExtensions.clear();
 }

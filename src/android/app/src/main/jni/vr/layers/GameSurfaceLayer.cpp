@@ -33,6 +33,17 @@ namespace {
 constexpr float kSuperImmersiveRadius            = 0.5f;
 constexpr float kInitialLowerPanelPitchInRadians = -MATH_FLOAT_PI / 4.0f; // -45 degrees in radians
 
+const char* XrResultToStringForLog(const XrResult result) {
+    static thread_local char buffer[XR_MAX_RESULT_STRING_SIZE];
+    memset(buffer, 0, sizeof(buffer));
+    if (OpenXr::GetInstance() != XR_NULL_HANDLE &&
+        xrResultToString(OpenXr::GetInstance(), result, buffer) == XR_SUCCESS &&
+        buffer[0] != '\0') {
+        return buffer;
+    }
+    return "XR_UNKNOWN_RESULT";
+}
+
 //-----------------------------------------------------------------------------
 // Local sysprops
 
@@ -283,7 +294,22 @@ void GameSurfaceLayer::FrameTopPanel(const XrSpace& space, std::vector<XrComposi
                                      const float& immersiveModeFactor) {
     // Prevent a seam between the top and bottom view
     constexpr uint32_t verticalBorderTex = 1;
-    const bool         useCylinder       = (GetCylinderSysprop() != 0) || (mImmersiveMode > 0);
+    const bool         userWantsCylinder = (GetCylinderSysprop() != 0) || (mImmersiveMode > 0);
+#ifdef XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME
+    const bool cylinderSupported = OpenXrIsExtensionEnabled(
+        XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
+#else
+    const bool cylinderSupported = false;
+#endif
+    const bool useCylinder = userWantsCylinder && cylinderSupported;
+    if (userWantsCylinder && !cylinderSupported) {
+        static bool warnedMissingCylinderExtension = false;
+        if (!warnedMissingCylinderExtension) {
+            XR_PORT_LOGW(
+                "XR_KHR_composition_layer_cylinder unavailable; falling back to quad top panel");
+            warnedMissingCylinderExtension = true;
+        }
+    }
     if (useCylinder) {
         // Create the Top Display Panel (Curved display)
         for (uint32_t eye = 0; eye < NUM_EYES; eye++) {
@@ -541,12 +567,18 @@ void GameSurfaceLayer::CreateSwapchain() {
     XrResult xrResult =
         xrGetInstanceProcAddr(OpenXr::GetInstance(), "xrCreateSwapchainAndroidSurfaceKHR",
                               (PFN_xrVoidFunction*)(&pfnCreateSwapchainAndroidSurfaceKHR));
+    XR_DIAG_LOGI(
+        "xrGetInstanceProcAddr(xrCreateSwapchainAndroidSurfaceKHR) => %d (%s) size=%ux%u",
+        xrResult, XrResultToStringForLog(xrResult), xsci.width, xsci.height);
     if (xrResult != XR_SUCCESS || pfnCreateSwapchainAndroidSurfaceKHR == nullptr) {
         FAIL("xrGetInstanceProcAddr failed for "
              "xrCreateSwapchainAndroidSurfaceKHR");
     }
 
-    OXR(pfnCreateSwapchainAndroidSurfaceKHR(mSession, &xsci, &mSwapchain.mHandle, &mSurface));
+    xrResult = pfnCreateSwapchainAndroidSurfaceKHR(mSession, &xsci, &mSwapchain.mHandle, &mSurface);
+    XR_DIAG_LOGI("xrCreateSwapchainAndroidSurfaceKHR => %d (%s) width=%u height=%u",
+                 xrResult, XrResultToStringForLog(xrResult), xsci.width, xsci.height);
+    OXR(xrResult);
     mSwapchain.mWidth  = xsci.width;
     mSwapchain.mHeight = xsci.height;
 }
