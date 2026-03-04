@@ -266,7 +266,10 @@ void EmuWindow_Android_OpenGL::StopPresenting() {
 }
 
 void EmuWindow_Android_OpenGL::PresentBootstrapFrame() {
-    if (presenting_state != PresentingState::Running) [[unlikely]] {
+    if (presenting_state == PresentingState::Stopped) [[unlikely]] {
+        return;
+    }
+    if (presenting_state == PresentingState::Initial) [[unlikely]] {
         const EGLBoolean make_current =
             eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
         if (make_current != EGL_TRUE) {
