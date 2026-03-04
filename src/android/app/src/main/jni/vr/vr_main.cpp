@@ -326,17 +326,28 @@ private:
             ALOGI("VR Extra Performance Mode: {}",
                   VRSettings::values.extra_performance_mode_enabled ? "enabled" : "disabled");
 
+            const bool     isAndroidXrRuntime = OpenXrIsAndroidXrRuntime();
             const uint32_t defaultResolutionFactor =
-                GetDefaultGameResolutionFactorForHmd(VRSettings::values.hmd_type);
+                isAndroidXrRuntime ? 1
+                                   : GetDefaultGameResolutionFactorForHmd(VRSettings::values.hmd_type);
             const uint32_t resolutionFactorFromPreferences = VRSettings::values.resolution_factor;
             // add a couple factors to resolution with immersive mode so users
             // aren't resetting their default settings to get higher res. min
             // resolution factor for immersive is 3x.
-            const uint32_t immersiveModeOffset = (VRSettings::values.vr_immersive_mode > 0) ? 2 : 0;
+            const uint32_t immersiveModeOffset =
+                (VRSettings::values.vr_immersive_mode > 0 && !isAndroidXrRuntime) ? 2 : 0;
             const uint32_t resolutionFactor =
                 (resolutionFactorFromPreferences > 0 ? resolutionFactorFromPreferences
                                                      : defaultResolutionFactor) +
                 immersiveModeOffset;
+
+            if (isAndroidXrRuntime) {
+                XR_PORT_LOGI(
+                    "Android XR performance profile: defaultResolutionFactor=%u prefResolution=%u "
+                    "immersiveModeOffset=%u finalResolutionFactor=%u",
+                    defaultResolutionFactor, resolutionFactorFromPreferences, immersiveModeOffset,
+                    resolutionFactor);
+            }
 
             if (resolutionFactor != defaultResolutionFactor) {
                 ALOGI("Using resolution factor of {}x instead of HMD default {}x", resolutionFactor,
@@ -1026,17 +1037,20 @@ private:
                         gOpenXr->mInstance, "xrPerfSettingsSetPerformanceLevelEXT",
                         (PFN_xrVoidFunction*)(&pfnPerfSettingsSetPerformanceLevelEXT));
                     if (XR_SUCCEEDED(result) && pfnPerfSettingsSetPerformanceLevelEXT != nullptr) {
+                        const XrPerfSettingsLevelEXT cpuPerfLevel =
+                            OpenXrIsAndroidXrRuntime() ? XR_PERF_SETTINGS_LEVEL_BOOST_EXT
+                                                       : VRSettings::values.cpu_level;
                         OXR_CheckErrors(
                             pfnPerfSettingsSetPerformanceLevelEXT(
                                 gOpenXr->mSession, XR_PERF_SETTINGS_DOMAIN_CPU_EXT,
-                                VRSettings::values.cpu_level),
+                                cpuPerfLevel),
                             "xrPerfSettingsSetPerformanceLevelEXT(CPU)", false);
                         OXR_CheckErrors(
                             pfnPerfSettingsSetPerformanceLevelEXT(
                                 gOpenXr->mSession, XR_PERF_SETTINGS_DOMAIN_GPU_EXT, kGpuPerfLevel),
                             "xrPerfSettingsSetPerformanceLevelEXT(GPU)", false);
                         ALOGI("{}(): Set clock levels to CPU:{}, GPU:{}", __FUNCTION__,
-                              VRSettings::values.cpu_level, kGpuPerfLevel);
+                              cpuPerfLevel, kGpuPerfLevel);
                     } else {
                         XR_PORT_LOGW("Skipping perf level setup: function unavailable");
                     }
