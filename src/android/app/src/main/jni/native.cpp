@@ -138,12 +138,6 @@ static void ApplyAndroidXrPerformanceOverrides(u64 program_id) {
                  previous_clock, kAndroidXrCpuClockPercent);
     }
 
-    if (program_id == 0x0004000000033500ULL &&
-        Settings::values.shaders_accurate_mul.GetValue()) {
-        Settings::values.shaders_accurate_mul = false;
-        LOG_INFO(Frontend,
-                 "Android XR speed profile: forcing Renderer_ShadersAccurateMul=false for OOT 3D");
-    }
 }
 
 static void TryShutdown() {
