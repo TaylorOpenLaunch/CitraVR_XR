@@ -326,10 +326,13 @@ private:
             ALOGI("VR Extra Performance Mode: {}",
                   VRSettings::values.extra_performance_mode_enabled ? "enabled" : "disabled");
 
-            const bool     isAndroidXrRuntime = OpenXrIsAndroidXrRuntime();
-            const uint32_t defaultResolutionFactor =
-                isAndroidXrRuntime ? 1
-                                   : GetDefaultGameResolutionFactorForHmd(VRSettings::values.hmd_type);
+            const bool isAndroidXrRuntime = OpenXrIsAndroidXrRuntime();
+            const uint32_t defaultResolutionFactor = isAndroidXrRuntime
+                                                         ? (VRSettings::values.extra_performance_mode_enabled
+                                                                ? 1
+                                                                : 2)
+                                                         : GetDefaultGameResolutionFactorForHmd(
+                                                               VRSettings::values.hmd_type);
             const uint32_t resolutionFactorFromPreferences = VRSettings::values.resolution_factor;
             // add a couple factors to resolution with immersive mode so users
             // aren't resetting their default settings to get higher res. min
