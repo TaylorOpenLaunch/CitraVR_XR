@@ -345,11 +345,27 @@ void Java_org_citra_citra_1emu_NativeLibrary_doFrame([[maybe_unused]] JNIEnv* en
     static uint64_t do_frame_calls = 0;
     ++do_frame_calls;
 
-    if (pause_emulation || window == nullptr) {
+    if (window == nullptr) {
         if ((do_frame_calls % 300) == 0) {
             LOG_INFO(Frontend,
                      "doFrame skipped (calls={} stop_run={} pause_emulation={} window_present={})",
                      do_frame_calls, stop_run.load(), pause_emulation.load(), window != nullptr);
+        }
+        return;
+    }
+
+    if (pause_emulation) {
+        if (s_is_xr_surface) {
+            if (do_frame_calls == 1 || (do_frame_calls % 300) == 0) {
+                LOG_INFO(Frontend,
+                         "doFrame paused fallback present (calls={} stop_run={} xr_surface=true)",
+                         do_frame_calls, stop_run.load());
+            }
+            window->TryPresenting();
+        } else if ((do_frame_calls % 300) == 0) {
+            LOG_INFO(Frontend,
+                     "doFrame skipped (calls={} stop_run={} pause_emulation=true xr_surface=false)",
+                     do_frame_calls, stop_run.load());
         }
         return;
     }
@@ -515,6 +531,9 @@ jboolean JNICALL Java_org_citra_citra_1emu_utils_GpuDriverHelper_supportsCustomD
 // TODO(xperia64): ensure these cannot be called in an invalid state (e.g. after StopEmulation)
 void Java_org_citra_citra_1emu_NativeLibrary_unPauseEmulation([[maybe_unused]] JNIEnv* env,
                                                               [[maybe_unused]] jobject obj) {
+    LOG_INFO(Frontend,
+             "NativeLibrary_unPauseEmulation: stop_run={} pause_before={} xr_surface={}",
+             stop_run.load(), pause_emulation.load(), s_is_xr_surface);
     pause_emulation = false;
     running_cv.notify_all();
     InputManager::NDKMotionHandler()->EnableSensors();
@@ -522,6 +541,8 @@ void Java_org_citra_citra_1emu_NativeLibrary_unPauseEmulation([[maybe_unused]] J
 
 void Java_org_citra_citra_1emu_NativeLibrary_pauseEmulation([[maybe_unused]] JNIEnv* env,
                                                             [[maybe_unused]] jobject obj) {
+    LOG_INFO(Frontend, "NativeLibrary_pauseEmulation: stop_run={} pause_before={} xr_surface={}",
+             stop_run.load(), pause_emulation.load(), s_is_xr_surface);
     pause_emulation = true;
     InputManager::NDKMotionHandler()->DisableSensors();
 }
